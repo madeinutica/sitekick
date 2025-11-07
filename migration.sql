@@ -90,6 +90,24 @@ BEGIN
     END IF;
 END $$;
 
+-- Rename description to job_name and drop client_id column
+DO $$
+BEGIN
+    -- Rename description to job_name if it exists
+    IF EXISTS (SELECT 1 FROM information_schema.columns 
+               WHERE table_name='jobs' AND column_name='description') 
+    AND NOT EXISTS (SELECT 1 FROM information_schema.columns 
+                    WHERE table_name='jobs' AND column_name='job_name') THEN
+        ALTER TABLE jobs RENAME COLUMN description TO job_name;
+    END IF;
+    
+    -- Drop client_id column if it exists
+    IF EXISTS (SELECT 1 FROM information_schema.columns 
+               WHERE table_name='jobs' AND column_name='client_id') THEN
+        ALTER TABLE jobs DROP COLUMN client_id;
+    END IF;
+END $$;
+
 -- Add columns to job_photos for better organization (skip if already added)
 DO $$ 
 BEGIN
