@@ -7,6 +7,9 @@ import type { User } from '@supabase/supabase-js'
 import Link from 'next/link'
 import Image from 'next/image'
 
+// Force dynamic rendering to avoid static generation issues
+export const dynamic = 'force-dynamic'
+
 type Profile = {
   id: string
   full_name: string | null

@@ -6,6 +6,9 @@ import { useEffect, useState } from 'react'
 import type { User } from '@supabase/supabase-js'
 import Link from 'next/link'
 
+// Force dynamic rendering to avoid static generation issues
+export const dynamic = 'force-dynamic'
+
 export default function DashboardPage() {
   const [user, setUser] = useState<User | null>(null)
   const [isSuperUser, setIsSuperUser] = useState(false)
