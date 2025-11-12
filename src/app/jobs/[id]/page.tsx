@@ -116,104 +116,200 @@ export default function JobDetailPage() {
       return
     }
 
-  setUploading(true)
+    setUploading(true)
     const file = event.target.files[0]
     const fileExt = (file.name.split('.').pop() || 'jpg').toLowerCase()
     const fileName = `${user.id}/${job.id}/${Date.now()}.${fileExt}`
 
-    // Client-side resize to reduce upload size and speed
-    const resizeImage = async (file: File, maxWidth = 1600, quality = 0.8) => {
+    // Mobile-optimized image processing for fastest uploads
+    const resizeImage = async (file: File) => {
       try {
-        const imageBitmap = await createImageBitmap(file)
-        const ratio = Math.min(1, maxWidth / imageBitmap.width)
-        const width = Math.round(imageBitmap.width * ratio)
-        const height = Math.round(imageBitmap.height * ratio)
+        // For mobile, be more aggressive with size reduction
+        const isMobile = window.innerWidth < 768
+        const targetWidth = isMobile ? 800 : 1200
+        const targetQuality = isMobile ? 0.5 : 0.6
+        
+        // Skip resize only for very small images
+        if (file.size < 200000) { // 200KB threshold for mobile
+          return file
+        }
 
-        const canvas = document.createElement('canvas')
-        canvas.width = width
-        canvas.height = height
-        const ctx = canvas.getContext('2d')!
-        ctx.drawImage(imageBitmap, 0, 0, width, height)
+        // Use OffscreenCanvas for better mobile performance if available
+        const useOffscreen = typeof OffscreenCanvas !== 'undefined' && isMobile
+        
+        if (useOffscreen) {
+          const imageBitmap = await createImageBitmap(file)
+          const ratio = Math.min(1, targetWidth / imageBitmap.width)
+          const width = Math.round(imageBitmap.width * ratio)
+          const height = Math.round(imageBitmap.height * ratio)
 
-        return await new Promise<Blob | null>((resolve) => {
-          canvas.toBlob((blob) => resolve(blob), `image/${fileExt === 'png' ? 'png' : 'jpeg'}`, quality)
-        })
+          const offscreenCanvas = new OffscreenCanvas(width, height)
+          const ctx = offscreenCanvas.getContext('2d')!
+          ctx.drawImage(imageBitmap, 0, 0, width, height)
+          
+          return await offscreenCanvas.convertToBlob({
+            type: 'image/jpeg',
+            quality: targetQuality
+          })
+        } else {
+          // Fallback to regular canvas
+          const imageBitmap = await createImageBitmap(file)
+          const ratio = Math.min(1, targetWidth / imageBitmap.width)
+          const width = Math.round(imageBitmap.width * ratio)
+          const height = Math.round(imageBitmap.height * ratio)
+
+          const canvas = document.createElement('canvas')
+          canvas.width = width
+          canvas.height = height
+          const ctx = canvas.getContext('2d')!
+          
+          // Optimize for speed on mobile
+          ctx.imageSmoothingEnabled = !isMobile // Disable smoothing on mobile for speed
+          if (ctx.imageSmoothingEnabled) {
+            ctx.imageSmoothingQuality = 'low' // Use low quality for speed
+          }
+          ctx.drawImage(imageBitmap, 0, 0, width, height)
+
+          return await new Promise<Blob | null>((resolve) => {
+            canvas.toBlob((blob) => resolve(blob), 'image/jpeg', targetQuality)
+          })
+        }
       } catch (err) {
         console.error('Resize failed, falling back to original file', err)
-        return null
+        return file
       }
+    }
+
+    // Create optimistic placeholder immediately
+    const tempId = Date.now()
+    const tempPhoto: JobPhoto = {
+      id: tempId,
+      image_url: URL.createObjectURL(file),
+      photo_type: photoType,
+      caption: caption || undefined,
+      created_at: new Date().toISOString()
     }
     
-    // Get geolocation
-    let latitude: number | null = null
-    let longitude: number | null = null
-    let accuracy: number | null = null
-
-    try {
-      if (navigator.geolocation) {
+    // Add optimistic photo immediately for instant feedback
+    setPhotos(prev => [tempPhoto, ...prev])
+    
+    // Get geolocation - skip on mobile for faster uploads
+    const getLocation = async () => {
+      const isMobile = window.innerWidth < 768
+      
+      // Skip geolocation on mobile to speed up uploads
+      if (isMobile || !navigator.geolocation) return {}
+      
+      try {
         const position = await new Promise<GeolocationPosition>((resolve, reject) => {
           navigator.geolocation.getCurrentPosition(resolve, reject, {
-            enableHighAccuracy: true,
-            timeout: 5000,
-            maximumAge: 0
+            enableHighAccuracy: false, // Use low accuracy for speed
+            timeout: 2000, // Very short timeout
+            maximumAge: 300000 // Allow 5min old location
           })
         })
-        latitude = position.coords.latitude
-        longitude = position.coords.longitude
-        accuracy = position.coords.accuracy
+        return {
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+          accuracy: position.coords.accuracy
+        }
+      } catch (error) {
+        console.log('Location not available:', error)
+        return {}
       }
-    } catch (error) {
-      console.log('Location not available:', error)
-      // Continue without location
     }
 
-    // Try to resize first
-    let uploadBlob: Blob | File = file
-    const resized = await resizeImage(file)
-    if (resized) {
-      // convert blob to File to preserve name/type
-      uploadBlob = new File([resized], `${Date.now()}.${fileExt}`, { type: resized.type })
-    }
+    try {
+      const isMobile = window.innerWidth < 768
+      
+      // On mobile, process image synchronously to avoid memory issues
+      if (isMobile) {
+        const resizedBlob = await resizeImage(file)
+        const location = {} // Skip location on mobile for speed
+        
+        // Convert blob to File if needed
+        const finalFile = resizedBlob instanceof Blob && !(resizedBlob instanceof File)
+          ? new File([resizedBlob], `${Date.now()}.${fileExt}`, { type: resizedBlob.type })
+          : resizedBlob as File
 
-    // Supabase storage client doesn't provide per-upload progress hooks in the browser SDK
-    // but resizing reduces size significantly which improves perceived speed.
-    const { error: uploadError } = await supabase.storage
-      .from('job_photos')
-      .upload(fileName, uploadBlob as File)
+        // Upload to storage
+        const { error: uploadError } = await supabase.storage
+          .from('job_photos')
+          .upload(fileName, finalFile)
 
-    if (uploadError) {
-      console.error('Upload error:', uploadError)
-      alert(`Failed to upload photo: ${uploadError.message}`)
-      setUploading(false)
-      return
-    }
+        if (uploadError) {
+          throw new Error(`Upload failed: ${uploadError.message}`)
+        }
 
-    console.log('Photo uploaded successfully to:', fileName)
+        const { data: { publicUrl } } = supabase.storage.from('job_photos').getPublicUrl(fileName)
 
-    const { data: { publicUrl } } = supabase.storage.from('job_photos').getPublicUrl(fileName)
+        // Insert to database
+        const { error: insertError } = await supabase.from('job_photos').insert({
+          job_id: job.id,
+          image_url: publicUrl,
+          user_id: user.id,
+          photo_type: photoType,
+          caption: caption || null,
+          ...location
+        })
 
-    console.log('Photo uploaded, public URL:', publicUrl)
+        if (insertError) {
+          throw new Error(`Database insert failed: ${insertError.message}`)
+        }
+      } else {
+        // Desktop: Run resize and location in parallel
+        const [uploadBlob, location] = await Promise.all([
+          resizeImage(file),
+          getLocation()
+        ])
 
-    const { error: insertError } = await supabase.from('job_photos').insert({
-      job_id: job.id,
-      image_url: publicUrl,
-      user_id: user.id,
-      photo_type: photoType,
-      caption: caption || null,
-      latitude: latitude,
-      longitude: longitude,
-      location_accuracy: accuracy,
-    })
+        // Convert blob to File if needed
+        const finalFile = uploadBlob instanceof Blob && !(uploadBlob instanceof File)
+          ? new File([uploadBlob], `${Date.now()}.${fileExt}`, { type: uploadBlob.type })
+          : uploadBlob as File
 
-    if (insertError) {
-      console.error('Error inserting photo record:', insertError)
-    } else {
-      console.log('Photo record inserted successfully')
-      fetchPhotos()
+        // Upload to storage
+        const { error: uploadError } = await supabase.storage
+          .from('job_photos')
+          .upload(fileName, finalFile)
+
+        if (uploadError) {
+          throw new Error(`Upload failed: ${uploadError.message}`)
+        }
+
+        const { data: { publicUrl } } = supabase.storage.from('job_photos').getPublicUrl(fileName)
+
+        // Insert to database
+        const { error: insertError } = await supabase.from('job_photos').insert({
+          job_id: job.id,
+          image_url: publicUrl,
+          user_id: user.id,
+          photo_type: photoType,
+          caption: caption || null,
+          ...location
+        })
+
+        if (insertError) {
+          throw new Error(`Database insert failed: ${insertError.message}`)
+        }
+      }
+
+      // Replace optimistic photo with real data
+      URL.revokeObjectURL(tempPhoto.image_url) // Clean up temp URL
+      await fetchPhotos() // Refresh with real data
+      
       setCaption('')
       setShowCaptionForm(false)
+      
+    } catch (error) {
+      console.error('Upload error:', error)
+      // Remove optimistic photo on failure
+      setPhotos(prev => prev.filter(p => p.id !== tempId))
+      URL.revokeObjectURL(tempPhoto.image_url)
+      alert(`Failed to upload photo: ${error instanceof Error ? error.message : 'Unknown error'}`)
     }
-  setUploading(false)
+
+    setUploading(false)
   }
 
   const handleUpdateJobField = async (field: string, value: string) => {
@@ -689,9 +785,25 @@ export default function JobDetailPage() {
                   <button
                     onClick={() => fileInputRef.current?.click()}
                     disabled={uploading}
-                    className="flex-1 px-4 py-2 bg-green-600 text-white rounded-lg font-medium hover:bg-green-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="flex-1 px-4 py-2 bg-green-600 text-white rounded-lg font-medium hover:bg-green-700 transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                   >
-                    {uploading ? 'Uploading...' : 'Take Photo'}
+                    {uploading ? (
+                      <>
+                        <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                          <path className="opacity-75" fill="currentColor" d="m4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                        Processing...
+                      </>
+                    ) : (
+                      <>
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
+                        </svg>
+                        Take Photo
+                      </>
+                    )}
                   </button>
                   <button
                     onClick={() => {
