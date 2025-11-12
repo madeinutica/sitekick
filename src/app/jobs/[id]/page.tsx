@@ -342,10 +342,13 @@ export default function JobDetailPage() {
               <div className="flex items-center gap-2">
                 <Link href="/profile" className="flex items-center gap-2 hover:bg-slate-50 rounded-lg px-2 py-1 transition">
                   {profile?.avatar_url ? (
-                    <img 
+                    <Image 
                       src={profile.avatar_url} 
                       alt="Profile" 
+                      width={28}
+                      height={28}
                       className="w-7 h-7 rounded-full object-cover"
+                      unoptimized
                     />
                   ) : (
                     <div className="w-7 h-7 bg-red-100 rounded-full flex items-center justify-center">
@@ -578,10 +581,13 @@ export default function JobDetailPage() {
             <div className="flex items-center gap-3">
               <Link href="/profile" className="flex items-center gap-2 hover:bg-slate-50 rounded-lg px-3 py-2 transition">
                 {profile?.avatar_url ? (
-                  <img 
+                  <Image 
                     src={profile.avatar_url} 
                     alt="Profile" 
+                    width={32}
+                    height={32}
                     className="w-8 h-8 rounded-full object-cover"
+                    unoptimized
                   />
                 ) : (
                   <div className="w-8 h-8 bg-red-100 rounded-full flex items-center justify-center">
