@@ -859,10 +859,11 @@ export default function JobDetailPage() {
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
               {filteredPhotos.map((photo) => (
                 <div key={photo.id} className="relative group cursor-pointer" onClick={() => {
+                  console.log('Photo clicked:', photo.id)
                   setSelectedPhoto(photo)
                   setShowPhotoModal(true)
                 }}>
-                  <div className="relative aspect-square rounded-lg overflow-hidden bg-slate-100 border border-slate-200">
+                  <div className="relative aspect-square rounded-lg overflow-hidden bg-slate-100 border border-slate-200 hover:shadow-lg transition-shadow">
                     <Image 
                       src={photo.image_url} 
                       alt={photo.caption || "Job site"} 
@@ -896,7 +897,11 @@ export default function JobDetailPage() {
                       )}
                     </div>
                     <button
-                      onClick={(e) => handleDeletePhoto(photo.id, e)}
+                      onClick={(e) => {
+                        e.preventDefault()
+                        e.stopPropagation()
+                        handleDeletePhoto(photo.id, e)
+                      }}
                       className="absolute top-2 right-2 w-7 h-7 bg-red-500 text-white rounded-lg opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center hover:bg-red-600"
                       title="Delete photo"
                     >
@@ -1015,12 +1020,24 @@ export default function JobDetailPage() {
       </main>
 
       {/* Photo Modal */}
-      {showPhotoModal && selectedPhoto && (
-        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4" onClick={() => setShowPhotoModal(false)}>
-          <div className="relative max-w-4xl max-h-full bg-white rounded-lg overflow-hidden" onClick={(e) => e.stopPropagation()}>
-            {/* Close button */}
+      {showPhotoModal && selectedPhoto ? (
+        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4" onClick={() => {
+          console.log('Modal background clicked')
+          setShowPhotoModal(false)
+        }}>
+          <div className="relative max-w-4xl max-h-full bg-white rounded-lg overflow-hidden" onClick={(e) => {
+            console.log('Modal content clicked')
+            e.stopPropagation()
+          }}>
+            {/* Debug info */}
+            <div className="absolute top-0 left-0 bg-red-500 text-white p-2 text-xs z-20">
+              Modal Open - Photo ID: {selectedPhoto.id}
+            </div>
             <button
-              onClick={() => setShowPhotoModal(false)}
+              onClick={() => {
+                console.log('Close button clicked')
+                setShowPhotoModal(false)
+              }}
               className="absolute top-4 right-4 z-10 w-10 h-10 bg-black bg-opacity-50 text-white rounded-full flex items-center justify-center hover:bg-opacity-70 transition"
             >
               <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1128,7 +1145,7 @@ export default function JobDetailPage() {
             </div>
           </div>
         </div>
-      )}
+      ) : null}
 
     </div>
   )
