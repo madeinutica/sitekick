@@ -38,6 +38,16 @@ export default function JobDetailPage() {
   const [showCaptionForm, setShowCaptionForm] = useState(false)
   const [filterType, setFilterType] = useState<string>('all')
   const [profile, setProfile] = useState<{ full_name: string | null; avatar_url: string | null } | null>(null)
+  
+  // Edit mode states
+  const [editingJobName, setEditingJobName] = useState(false)
+  const [editingAddress, setEditingAddress] = useState(false)
+  const [editingNotes, setEditingNotes] = useState(false)
+  const [editJobName, setEditJobName] = useState('')
+  const [editAddress, setEditAddress] = useState('')
+  const [editNotes, setEditNotes] = useState('')
+  const [saving, setSaving] = useState(false)
+  
   const router = useRouter()
   const params = useParams()
   const supabase = createClient()
@@ -106,10 +116,33 @@ export default function JobDetailPage() {
       return
     }
 
-    setUploading(true)
+  setUploading(true)
     const file = event.target.files[0]
-    const fileExt = file.name.split('.').pop()
+    const fileExt = (file.name.split('.').pop() || 'jpg').toLowerCase()
     const fileName = `${user.id}/${job.id}/${Date.now()}.${fileExt}`
+
+    // Client-side resize to reduce upload size and speed
+    const resizeImage = async (file: File, maxWidth = 1600, quality = 0.8) => {
+      try {
+        const imageBitmap = await createImageBitmap(file)
+        const ratio = Math.min(1, maxWidth / imageBitmap.width)
+        const width = Math.round(imageBitmap.width * ratio)
+        const height = Math.round(imageBitmap.height * ratio)
+
+        const canvas = document.createElement('canvas')
+        canvas.width = width
+        canvas.height = height
+        const ctx = canvas.getContext('2d')!
+        ctx.drawImage(imageBitmap, 0, 0, width, height)
+
+        return await new Promise<Blob | null>((resolve) => {
+          canvas.toBlob((blob) => resolve(blob), `image/${fileExt === 'png' ? 'png' : 'jpeg'}`, quality)
+        })
+      } catch (err) {
+        console.error('Resize failed, falling back to original file', err)
+        return null
+      }
+    }
     
     // Get geolocation
     let latitude: number | null = null
@@ -134,9 +167,19 @@ export default function JobDetailPage() {
       // Continue without location
     }
 
+    // Try to resize first
+    let uploadBlob: Blob | File = file
+    const resized = await resizeImage(file)
+    if (resized) {
+      // convert blob to File to preserve name/type
+      uploadBlob = new File([resized], `${Date.now()}.${fileExt}`, { type: resized.type })
+    }
+
+    // Supabase storage client doesn't provide per-upload progress hooks in the browser SDK
+    // but resizing reduces size significantly which improves perceived speed.
     const { error: uploadError } = await supabase.storage
       .from('job_photos')
-      .upload(fileName, file)
+      .upload(fileName, uploadBlob as File)
 
     if (uploadError) {
       console.error('Upload error:', uploadError)
@@ -170,7 +213,66 @@ export default function JobDetailPage() {
       setCaption('')
       setShowCaptionForm(false)
     }
-    setUploading(false)
+  setUploading(false)
+  }
+
+  const handleUpdateJobField = async (field: string, value: string) => {
+    if (!job || !jobId) return
+    
+    setSaving(true)
+    const { error } = await supabase
+      .from('jobs')
+      .update({ [field]: value })
+      .eq('id', jobId)
+
+    if (error) {
+      console.error('Error updating job:', error)
+      alert(`Failed to update ${field}`)
+    } else {
+      // Update local job state
+      setJob({ ...job, [field]: value })
+      
+      // Reset edit states
+      if (field === 'job_name') {
+        setEditingJobName(false)
+        setEditJobName('')
+      } else if (field === 'address') {
+        setEditingAddress(false)
+        setEditAddress('')
+      } else if (field === 'installation_info') {
+        setEditingNotes(false)
+        setEditNotes('')
+      }
+    }
+    setSaving(false)
+  }
+
+  const startEditJobName = () => {
+    setEditJobName(job?.job_name || '')
+    setEditingJobName(true)
+  }
+
+  const startEditAddress = () => {
+    setEditAddress(job?.address || '')
+    setEditingAddress(true)
+  }
+
+  const startEditNotes = () => {
+    setEditNotes(job?.installation_info || '')
+    setEditingNotes(true)
+  }
+
+  const cancelEdit = (type: string) => {
+    if (type === 'job_name') {
+      setEditingJobName(false)
+      setEditJobName('')
+    } else if (type === 'address') {
+      setEditingAddress(false)
+      setEditAddress('')
+    } else if (type === 'notes') {
+      setEditingNotes(false)
+      setEditNotes('')
+    }
   }
 
   const handleSignOut = async () => {
@@ -269,9 +371,99 @@ export default function JobDetailPage() {
             </div>
             {/* Bottom row with job info */}
             <div className="text-center">
-              <h1 className="text-lg font-bold text-slate-900">{job.job_name}</h1>
-              {job.address && (
-                <p className="text-sm text-slate-600 mt-1">{job.address}</p>
+              {editingJobName ? (
+                <div className="space-y-2">
+                  <input
+                    type="text"
+                    value={editJobName}
+                    onChange={(e) => setEditJobName(e.target.value)}
+                    className="w-full text-lg font-bold text-center border border-slate-300 rounded-lg px-3 py-1 focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent"
+                    disabled={saving}
+                    autoFocus
+                  />
+                  <div className="flex justify-center gap-2">
+                    <button
+                      onClick={() => handleUpdateJobField('job_name', editJobName)}
+                      disabled={saving || !editJobName.trim()}
+                      className="px-3 py-1 text-sm bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"
+                    >
+                      {saving ? 'Saving...' : 'Save'}
+                    </button>
+                    <button
+                      onClick={() => cancelEdit('job_name')}
+                      disabled={saving}
+                      className="px-3 py-1 text-sm bg-slate-200 text-slate-700 rounded-lg hover:bg-slate-300"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex items-center justify-center gap-2">
+                  <h1 className="text-lg font-bold text-slate-900">{job.job_name}</h1>
+                  <button
+                    onClick={startEditJobName}
+                    className="p-1 text-slate-400 hover:text-slate-600 transition"
+                    title="Edit job name"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                    </svg>
+                  </button>
+                </div>
+              )}
+              {job.address && !editingAddress && (
+                <div className="flex items-center justify-center gap-2 mt-1">
+                  <p className="text-sm text-slate-600">{job.address}</p>
+                  <button
+                    onClick={startEditAddress}
+                    className="p-1 text-slate-400 hover:text-slate-600 transition"
+                    title="Edit address"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                    </svg>
+                  </button>
+                </div>
+              )}
+              {editingAddress && (
+                <div className="space-y-2 mt-2">
+                  <input
+                    type="text"
+                    value={editAddress}
+                    onChange={(e) => setEditAddress(e.target.value)}
+                    placeholder="Enter address"
+                    className="w-full text-sm text-center border border-slate-300 rounded-lg px-3 py-1 focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent"
+                    disabled={saving}
+                  />
+                  <div className="flex justify-center gap-2">
+                    <button
+                      onClick={() => handleUpdateJobField('address', editAddress)}
+                      disabled={saving}
+                      className="px-3 py-1 text-sm bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"
+                    >
+                      {saving ? 'Saving...' : 'Save'}
+                    </button>
+                    <button
+                      onClick={() => cancelEdit('address')}
+                      disabled={saving}
+                      className="px-3 py-1 text-sm bg-slate-200 text-slate-700 rounded-lg hover:bg-slate-300"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
+              {!job.address && !editingAddress && (
+                <button
+                  onClick={startEditAddress}
+                  className="text-sm text-slate-400 hover:text-slate-600 transition flex items-center justify-center gap-1 mt-1"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                  </svg>
+                  Add address
+                </button>
               )}
             </div>
           </div>
@@ -287,9 +479,99 @@ export default function JobDetailPage() {
                 </button>
               </Link>
               <div>
-                <h1 className="text-xl font-bold text-slate-900">{job.job_name}</h1>
-                {job.address && (
-                  <p className="text-sm text-slate-600">{job.address}</p>
+                {editingJobName ? (
+                  <div className="space-y-2">
+                    <input
+                      type="text"
+                      value={editJobName}
+                      onChange={(e) => setEditJobName(e.target.value)}
+                      className="text-xl font-bold border border-slate-300 rounded-lg px-3 py-1 focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent"
+                      disabled={saving}
+                      autoFocus
+                    />
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => handleUpdateJobField('job_name', editJobName)}
+                        disabled={saving || !editJobName.trim()}
+                        className="px-3 py-1 text-sm bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"
+                      >
+                        {saving ? 'Saving...' : 'Save'}
+                      </button>
+                      <button
+                        onClick={() => cancelEdit('job_name')}
+                        disabled={saving}
+                        className="px-3 py-1 text-sm bg-slate-200 text-slate-700 rounded-lg hover:bg-slate-300"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <h1 className="text-xl font-bold text-slate-900">{job.job_name}</h1>
+                    <button
+                      onClick={startEditJobName}
+                      className="p-1 text-slate-400 hover:text-slate-600 transition"
+                      title="Edit job name"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                      </svg>
+                    </button>
+                  </div>
+                )}
+                {job.address && !editingAddress && (
+                  <div className="flex items-center gap-2">
+                    <p className="text-sm text-slate-600">{job.address}</p>
+                    <button
+                      onClick={startEditAddress}
+                      className="p-1 text-slate-400 hover:text-slate-600 transition"
+                      title="Edit address"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                      </svg>
+                    </button>
+                  </div>
+                )}
+                {editingAddress && (
+                  <div className="space-y-2">
+                    <input
+                      type="text"
+                      value={editAddress}
+                      onChange={(e) => setEditAddress(e.target.value)}
+                      placeholder="Enter address"
+                      className="text-sm border border-slate-300 rounded-lg px-3 py-1 focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent"
+                      disabled={saving}
+                    />
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => handleUpdateJobField('address', editAddress)}
+                        disabled={saving}
+                        className="px-3 py-1 text-sm bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"
+                      >
+                        {saving ? 'Saving...' : 'Save'}
+                      </button>
+                      <button
+                        onClick={() => cancelEdit('address')}
+                        disabled={saving}
+                        className="px-3 py-1 text-sm bg-slate-200 text-slate-700 rounded-lg hover:bg-slate-300"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                )}
+                {!job.address && !editingAddress && (
+                  <button
+                    onClick={startEditAddress}
+                    className="text-sm text-slate-400 hover:text-slate-600 transition flex items-center gap-1"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                    </svg>
+                    Add address
+                  </button>
                 )}
               </div>
             </div>
@@ -542,12 +824,70 @@ export default function JobDetailPage() {
         </div>
 
         {/* Notes Section */}
-        {job.installation_info && (
-          <div className="bg-white rounded-xl border border-slate-200 p-6 mt-6 shadow-sm">
-            <h2 className="text-lg font-semibold text-slate-900 mb-3">Notes</h2>
-            <p className="text-slate-600">{job.installation_info}</p>
+        <div className="bg-white rounded-xl border border-slate-200 p-6 mt-6 shadow-sm">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-lg font-semibold text-slate-900">Notes</h2>
+            {!editingNotes && job.installation_info && (
+              <button
+                onClick={startEditNotes}
+                className="p-1 text-slate-400 hover:text-slate-600 transition"
+                title="Edit notes"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                </svg>
+              </button>
+            )}
           </div>
-        )}
+          
+          {editingNotes ? (
+            <div className="space-y-3">
+              <textarea
+                value={editNotes}
+                onChange={(e) => setEditNotes(e.target.value)}
+                placeholder="Add installation notes, important details, or any other relevant information..."
+                className="w-full border border-slate-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent resize-none"
+                rows={4}
+                disabled={saving}
+              />
+              <div className="flex gap-2">
+                <button
+                  onClick={() => handleUpdateJobField('installation_info', editNotes)}
+                  disabled={saving}
+                  className="px-4 py-2 bg-red-600 text-white rounded-lg font-medium hover:bg-red-700 disabled:opacity-50"
+                >
+                  {saving ? 'Saving...' : 'Save Notes'}
+                </button>
+                <button
+                  onClick={() => cancelEdit('notes')}
+                  disabled={saving}
+                  className="px-4 py-2 bg-slate-200 text-slate-700 rounded-lg font-medium hover:bg-slate-300"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : job.installation_info ? (
+            <div className="prose prose-slate max-w-none">
+              <p className="text-slate-600 whitespace-pre-wrap">{job.installation_info}</p>
+            </div>
+          ) : (
+            <div className="text-center py-6">
+              <div className="w-12 h-12 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-3">
+                <svg className="w-6 h-6 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                </svg>
+              </div>
+              <p className="text-slate-600 mb-3">No notes added yet</p>
+              <button
+                onClick={startEditNotes}
+                className="px-4 py-2 bg-red-600 text-white rounded-lg font-medium hover:bg-red-700 transition"
+              >
+                Add Notes
+              </button>
+            </div>
+          )}
+        </div>
       </main>
     </div>
   )
