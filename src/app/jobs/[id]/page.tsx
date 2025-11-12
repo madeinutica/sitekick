@@ -47,6 +47,8 @@ export default function JobDetailPage() {
   const [editAddress, setEditAddress] = useState('')
   const [editNotes, setEditNotes] = useState('')
   const [saving, setSaving] = useState(false)
+  const [selectedPhoto, setSelectedPhoto] = useState<JobPhoto | null>(null)
+  const [showPhotoModal, setShowPhotoModal] = useState(false)
   
   const router = useRouter()
   const params = useParams()
@@ -856,7 +858,10 @@ export default function JobDetailPage() {
           {filteredPhotos.length > 0 ? (
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
               {filteredPhotos.map((photo) => (
-                <div key={photo.id} className="relative group">
+                <div key={photo.id} className="relative group cursor-pointer" onClick={() => {
+                  setSelectedPhoto(photo)
+                  setShowPhotoModal(true)
+                }}>
                   <div className="relative aspect-square rounded-lg overflow-hidden bg-slate-100 border border-slate-200">
                     <Image 
                       src={photo.image_url} 
@@ -910,6 +915,7 @@ export default function JobDetailPage() {
                         target="_blank"
                         rel="noopener noreferrer"
                         className="text-xs text-indigo-600 hover:text-indigo-800 flex items-center gap-1 mt-1"
+                        onClick={(e) => e.stopPropagation()}
                       >
                         <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
                           <path fillRule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clipRule="evenodd" />
@@ -1007,6 +1013,123 @@ export default function JobDetailPage() {
           )}
         </div>
       </main>
+
+      {/* Photo Modal */}
+      {showPhotoModal && selectedPhoto && (
+        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4" onClick={() => setShowPhotoModal(false)}>
+          <div className="relative max-w-4xl max-h-full bg-white rounded-lg overflow-hidden" onClick={(e) => e.stopPropagation()}>
+            {/* Close button */}
+            <button
+              onClick={() => setShowPhotoModal(false)}
+              className="absolute top-4 right-4 z-10 w-10 h-10 bg-black bg-opacity-50 text-white rounded-full flex items-center justify-center hover:bg-opacity-70 transition"
+            >
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+
+            {/* Navigation buttons */}
+            {(() => {
+              const currentIndex = filteredPhotos.findIndex(p => p.id === selectedPhoto.id)
+              const hasPrev = currentIndex > 0
+              const hasNext = currentIndex < filteredPhotos.length - 1
+
+              return (
+                <>
+                  {hasPrev && (
+                    <button
+                      onClick={() => setSelectedPhoto(filteredPhotos[currentIndex - 1])}
+                      className="absolute left-4 top-1/2 -translate-y-1/2 w-12 h-12 bg-black bg-opacity-50 text-white rounded-full flex items-center justify-center hover:bg-opacity-70 transition"
+                    >
+                      <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                      </svg>
+                    </button>
+                  )}
+                  {hasNext && (
+                    <button
+                      onClick={() => setSelectedPhoto(filteredPhotos[currentIndex + 1])}
+                      className="absolute right-4 top-1/2 -translate-y-1/2 w-12 h-12 bg-black bg-opacity-50 text-white rounded-full flex items-center justify-center hover:bg-opacity-70 transition"
+                    >
+                      <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                      </svg>
+                    </button>
+                  )}
+                </>
+              )
+            })()}
+
+            {/* Image */}
+            <div className="relative w-full h-auto max-h-[80vh]">
+              <Image
+                src={selectedPhoto.image_url}
+                alt={selectedPhoto.caption || "Job site"}
+                width={1200}
+                height={1200}
+                className="w-full h-auto object-contain"
+                unoptimized
+                onError={(e) => {
+                  console.error('Image failed to load:', selectedPhoto.image_url)
+                  e.currentTarget.src = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="400" height="400"%3E%3Crect fill="%23ddd" width="400" height="400"/%3E%3Ctext x="50%25" y="50%25" text-anchor="middle" dy=".3em" font-size="24"%3EError%3C/text%3E%3C/svg%3E'
+                }}
+              />
+            </div>
+
+            {/* Photo info */}
+            <div className="p-6 bg-white">
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-2">
+                  {selectedPhoto.photo_type && (
+                    <span className={`px-3 py-1 text-sm font-semibold rounded-full ${
+                      selectedPhoto.photo_type === 'before' ? 'bg-blue-500 text-white' :
+                      selectedPhoto.photo_type === 'after' ? 'bg-green-500 text-white' :
+                      selectedPhoto.photo_type === 'issue' ? 'bg-red-500 text-white' :
+                      selectedPhoto.photo_type === 'completed' ? 'bg-purple-500 text-white' :
+                      'bg-slate-500 text-white'
+                    }`}>
+                      {selectedPhoto.photo_type}
+                    </span>
+                  )}
+                  {selectedPhoto.latitude && selectedPhoto.longitude && (
+                    <span className="px-3 py-1 text-sm font-semibold rounded-full bg-orange-500 text-white flex items-center gap-1">
+                      <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clipRule="evenodd" />
+                      </svg>
+                      GPS
+                    </span>
+                  )}
+                </div>
+                <div className="text-sm text-slate-500">
+                  {(() => {
+                    const currentIndex = filteredPhotos.findIndex(p => p.id === selectedPhoto.id)
+                    return `${currentIndex + 1} of ${filteredPhotos.length}`
+                  })()}
+                </div>
+              </div>
+
+              {selectedPhoto.caption && (
+                <p className="text-slate-700 mb-4">{selectedPhoto.caption}</p>
+              )}
+
+              {selectedPhoto.latitude && selectedPhoto.longitude && (
+                <a
+                  href={`https://www.google.com/maps?q=${selectedPhoto.latitude},${selectedPhoto.longitude}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition"
+                >
+                  <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clipRule="evenodd" />
+                  </svg>
+                  View on Map
+                </a>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   )
 }
