@@ -103,7 +103,9 @@ export default function DashboardPage() {
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="mb-8">
-          <h2 className="text-3xl font-bold text-slate-900 mb-2">Welcome back!</h2>
+          <h2 className="text-3xl font-bold text-slate-900 mb-2">
+            Welcome back{profile?.full_name ? `, ${profile.full_name.split(' ')[0]}` : ''}!
+          </h2>
           <p className="text-slate-600">{user.email}</p>
         </div>
 
@@ -114,7 +116,7 @@ export default function DashboardPage() {
               <div className="flex items-center space-x-4">
                 <div className="w-12 h-12 bg-red-100 rounded-lg flex items-center justify-center">
                   <svg className="w-6 h-6 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                   </svg>
                 </div>
                 <div>
@@ -176,7 +178,172 @@ export default function DashboardPage() {
             </Link>
           </div>
         )}
+
+        {/* Notes Section */}
+          {/* Notes Section removed */}
       </main>
+    </div>
+  )
+}
+
+// NotesSection component
+import { useCallback } from 'react'
+
+type Note = {
+  id: string
+  user_id: string
+  content: string
+  created_at: string
+  user_profile?: { full_name?: string; avatar_url?: string }
+}
+
+function NotesSection({ user, isSuperUser, profile }: { user: User, isSuperUser: boolean, profile: any }) {
+  const supabase = createClient()
+  const [notes, setNotes] = useState<Note[]>([])
+  const [noteContent, setNoteContent] = useState('')
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editingContent, setEditingContent] = useState('')
+  const [loading, setLoading] = useState(false)
+
+  // Fetch notes with user profile
+  const fetchNotes = useCallback(async () => {
+    setLoading(true)
+    const { data, error } = await supabase
+      .from('notes')
+      .select('id, user_id, content, created_at, profiles(full_name, avatar_url)')
+      .order('created_at', { ascending: false })
+    if (!error && data) {
+      setNotes(data.map((n: any) => ({
+        ...n,
+        user_profile: n.profiles
+      })))
+    }
+    setLoading(false)
+  }, [supabase])
+
+  useEffect(() => {
+    fetchNotes()
+  }, [fetchNotes])
+
+  // Add note
+  const handleAddNote = async () => {
+    if (!noteContent.trim()) return
+    setLoading(true)
+    const { error } = await supabase.from('notes').insert({
+      user_id: user.id,
+      content: noteContent
+    })
+    setNoteContent('')
+    setLoading(false)
+    fetchNotes()
+  }
+
+  // Edit note
+  const handleEditNote = async (id: string) => {
+    if (!editingContent.trim()) return
+    setLoading(true)
+    await supabase.from('notes').update({ content: editingContent }).eq('id', id)
+    setEditingId(null)
+    setEditingContent('')
+    setLoading(false)
+    fetchNotes()
+  }
+
+  // Format time ago
+  function formatTimeAgo(dateString: string) {
+    const now = new Date()
+    const date = new Date(dateString)
+    const diffMs = now.getTime() - date.getTime()
+    const diffMins = Math.floor(diffMs / 60000)
+    if (diffMins < 1) return 'just now'
+    if (diffMins < 60) return `${diffMins} minute${diffMins === 1 ? '' : 's'} ago`
+    const diffHours = Math.floor(diffMins / 60)
+    if (diffHours < 24) return `${diffHours} hour${diffHours === 1 ? '' : 's'} ago`
+    const diffDays = Math.floor(diffHours / 24)
+    return `${diffDays} day${diffDays === 1 ? '' : 's'} ago`
+  }
+
+  return (
+    <div>
+      <div className="space-y-5 mb-4">
+        {notes.length > 0 ? (
+          notes.map(note => (
+            <div key={note.id} className="flex items-start gap-3">
+              {note.user_profile?.avatar_url ? (
+                <img src={note.user_profile.avatar_url} alt="avatar" className="rounded-full w-10 h-10 object-cover" />
+              ) : (
+                <div className="w-10 h-10 bg-red-500 rounded-full flex items-center justify-center">
+                  <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                  </svg>
+                </div>
+              )}
+              <div className="flex-1">
+                <div className="font-bold text-slate-900 leading-tight">{note.user_profile?.full_name || 'User'}</div>
+                {editingId === note.id ? (
+                  <div className="flex gap-2 mt-1">
+                    <input
+                      type="text"
+                      value={editingContent}
+                      onChange={e => setEditingContent(e.target.value)}
+                      className="flex-1 border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
+                    />
+                    <button
+                      className="px-3 py-2 bg-red-600 text-white rounded-lg font-semibold text-sm hover:bg-red-700 transition"
+                      onClick={() => handleEditNote(note.id)}
+                      disabled={loading || !editingContent.trim()}
+                    >Save</button>
+                    <button
+                      className="px-3 py-2 bg-slate-200 text-slate-700 rounded-lg font-semibold text-sm hover:bg-slate-300 transition"
+                      onClick={() => { setEditingId(null); setEditingContent('') }}
+                    >Cancel</button>
+                  </div>
+                ) : (
+                  <div className="text-slate-800 mb-1 whitespace-pre-line">{note.content}</div>
+                )}
+                <div className="text-xs text-slate-500">{formatTimeAgo(note.created_at)}</div>
+              </div>
+              {(isSuperUser || note.user_id === user.id) && editingId !== note.id && (
+                <button
+                  className="ml-2 text-slate-400 hover:text-red-600"
+                  title="Edit note"
+                  onClick={() => { setEditingId(note.id); setEditingContent(note.content) }}
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                  </svg>
+                </button>
+              )}
+            </div>
+          ))
+        ) : (
+          <div className="text-slate-500 text-sm">No comments yet.</div>
+        )}
+      </div>
+      <form className="flex items-center gap-3 pt-2 border-t border-slate-100" onSubmit={e => { e.preventDefault(); handleAddNote() }}>
+        {profile?.avatar_url ? (
+          <img src={profile.avatar_url} alt="avatar" className="rounded-full w-10 h-10 object-cover" />
+        ) : (
+          <div className="w-10 h-10 bg-red-500 rounded-full flex items-center justify-center">
+            <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+            </svg>
+          </div>
+        )}
+        <input
+          type="text"
+          className="flex-1 border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
+          placeholder="Add a comment"
+          value={noteContent}
+          onChange={e => setNoteContent(e.target.value)}
+          disabled={loading}
+        />
+        <button
+          type="submit"
+          className="px-4 py-2 bg-red-600 text-white rounded-lg font-semibold text-sm hover:bg-red-700 transition disabled:opacity-50"
+          disabled={loading || !noteContent.trim()}
+        >Post</button>
+      </form>
     </div>
   )
 }

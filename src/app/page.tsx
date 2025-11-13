@@ -185,8 +185,8 @@ export default function LandingPage() {
               <Image
                 src="/images/sitekick-logo-web.png"
                 alt="Sitekick Logo"
-                width={64}
-                height={64}
+                width={120}
+                height={120}
                 className="rounded-lg"
               />
             </div>
