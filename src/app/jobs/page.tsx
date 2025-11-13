@@ -15,6 +15,8 @@ type Job = {
   installation_info: string
   address: string
   created_at: string
+  user_id: string
+  profiles?: { full_name: string | null; avatar_url: string | null }
 }
 
 export default function JobsPage() {
@@ -25,6 +27,9 @@ export default function JobsPage() {
   const [address, setAddress] = useState('')
   const [showForm, setShowForm] = useState(false)
   const [profile, setProfile] = useState<{ full_name: string | null; avatar_url: string | null } | null>(null)
+  const [isSuperUser, setIsSuperUser] = useState(false)
+  const [selectedUserId, setSelectedUserId] = useState('')
+  const [users, setUsers] = useState<{ id: string; full_name: string | null; email: string }[]>([])
   const router = useRouter()
   const supabase = createClient()
 
@@ -38,7 +43,7 @@ export default function JobsPage() {
 
     let query = supabase
       .from('jobs')
-      .select('*')
+      .select('*, profiles(full_name, avatar_url)')
       .order('created_at', { ascending: false })
 
     // If not a super user, filter by user_id
@@ -64,15 +69,31 @@ export default function JobsPage() {
         setUser(data.user)
         fetchJobs(data.user.id)
         
-        // Get profile data
+        // Get profile data and check if super user
         const { data: profileData } = await supabase
           .from('profiles')
-          .select('full_name, avatar_url')
+          .select('full_name, avatar_url, is_super_user')
           .eq('id', data.user.id)
           .maybeSingle()
         
         if (profileData) {
           setProfile(profileData)
+          setIsSuperUser(profileData.is_super_user || false)
+          
+          // If super user, fetch all users for assignment
+          if (profileData.is_super_user) {
+            const { data: usersData } = await supabase
+              .from('profiles')
+              .select('id, full_name')
+              .order('full_name')
+            if (usersData) {
+              setUsers(usersData.map((profile: any) => ({
+                id: profile.id,
+                full_name: profile.full_name,
+                email: '' // Email not accessible client-side
+              })))
+            }
+          }
         }
       }
     }
@@ -82,13 +103,14 @@ export default function JobsPage() {
   const handleAddJob = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
     if (!user) return
+    const assignedUserId = isSuperUser && selectedUserId ? selectedUserId : user.id
     const { error } = await supabase
       .from('jobs')
       .insert({ 
         job_name: jobName, 
         installation_info: installationInfo,
         address: address,
-        user_id: user.id 
+        user_id: assignedUserId 
       })
     if (error) {
       console.error(error)
@@ -97,6 +119,7 @@ export default function JobsPage() {
       setJobName('')
       setInstallationInfo('')
       setAddress('')
+      setSelectedUserId('')
       setShowForm(false)
     }
   }
@@ -237,6 +260,25 @@ export default function JobsPage() {
                   rows={3}
                 />
               </div>
+              {isSuperUser && (
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-2">
+                    Assign to User
+                  </label>
+                  <select
+                    value={selectedUserId}
+                    onChange={(e) => setSelectedUserId(e.target.value)}
+                    className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent"
+                  >
+                    <option value="">Select a user...</option>
+                    {users.map((u) => (
+                      <option key={u.id} value={u.id}>
+                        {u.full_name || u.email || 'Unnamed User'}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
               <div className="flex space-x-3">
                 <button 
                   type="submit" 
@@ -263,13 +305,24 @@ export default function JobsPage() {
               <Link href={`/jobs/${job.id}`}>
                 <div className="bg-white rounded-xl border border-slate-200 p-6 hover:shadow-md transition cursor-pointer">
                   <div className="flex items-start space-x-4">
-                    <div className="w-12 h-12 bg-red-100 rounded-lg flex items-center justify-center shrink-0">
-                      <svg className="w-6 h-6 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                      </svg>
-                    </div>
+                    {isSuperUser && job.profiles?.avatar_url ? (
+                      <img
+                        src={job.profiles.avatar_url}
+                        alt="Job owner avatar"
+                        className="w-12 h-12 rounded-full object-cover shrink-0"
+                      />
+                    ) : (
+                      <div className="w-12 h-12 bg-red-100 rounded-lg flex items-center justify-center shrink-0">
+                        <svg className="w-6 h-6 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                        </svg>
+                      </div>
+                    )}
                     <div className="flex-1 min-w-0">
                       <h3 className="text-lg font-semibold text-slate-900 truncate">{job.job_name}</h3>
+                      {isSuperUser && job.profiles?.full_name && (
+                        <p className="text-slate-500 text-xs mt-1">Assigned to: {job.profiles.full_name}</p>
+                      )}
                       {job.address && (
                         <p className="text-slate-600 text-sm mt-1 truncate">{job.address}</p>
                       )}
