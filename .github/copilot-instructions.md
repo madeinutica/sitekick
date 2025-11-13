@@ -19,8 +19,16 @@
 
 - [x] Implement Job Assignment Editing for Super Users
 
-<!--
-## Execution Guidelines
+- [x] Implement Header Account Dropdown Menu
+
+- [x] Add Password Change Functionality to Profile Page
+
+- [x] Remove Photo Upload Progress Graph from Dashboard
+
+- [x] Implement User Filter Sidebar for Super Users
+
+- [x] Ensure consistent use of custom color palette throughout the application
+- [x] Update typography to use Inter as primary font with proper weight guidelines (Headings: Bold/SemiBold, Body: Regular/Medium)
 PROGRESS TRACKING:
 - If any tools are available to manage the above todo list, use it to track progress through this checklist.
 - After completing each step, mark it complete and add a summary.

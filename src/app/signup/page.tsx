@@ -73,7 +73,7 @@ export default function SignupPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-white to-orange-50 flex items-center justify-center p-4">
+    <div className="min-h-screen bg-linear-to-br from-light-gray via-white to-light-gray flex items-center justify-center p-4">
       <div className="w-full max-w-md">
         {/* Logo/Header */}
         <div className="text-center mb-8">
@@ -92,13 +92,13 @@ export default function SignupPage() {
         <div className="bg-white rounded-2xl shadow-xl border border-slate-200 p-8">
           <form onSubmit={handleSignup} className="space-y-5">
             {error && (
-              <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm">
+              <div className="bg-primary-red-light border border-primary-red text-primary-red px-4 py-3 rounded-lg text-sm">
                 {error}
               </div>
             )}
 
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-2">
+              <label className="block text-sm font-normal text-slate-700 mb-2">
                 Email Address *
               </label>
               <input
@@ -112,7 +112,7 @@ export default function SignupPage() {
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-2">
+              <label className="block text-sm font-normal text-slate-700 mb-2">
                 Password *
               </label>
               <input
@@ -127,7 +127,7 @@ export default function SignupPage() {
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-2">
+              <label className="block text-sm font-normal text-slate-700 mb-2">
                 Full Name
               </label>
               <input
@@ -140,7 +140,7 @@ export default function SignupPage() {
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-2">
+              <label className="block text-sm font-normal text-slate-700 mb-2">
                 Phone Number
               </label>
               <input
@@ -153,7 +153,7 @@ export default function SignupPage() {
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-2">
+              <label className="block text-sm font-normal text-slate-700 mb-2">
                 Company
               </label>
               <input
@@ -168,7 +168,7 @@ export default function SignupPage() {
             <button
               type="submit"
               disabled={loading}
-              className="w-full px-6 py-3 bg-red-600 text-white rounded-lg font-semibold hover:bg-red-700 transition disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-red-200"
+              className="w-full px-6 py-3 bg-primary-red text-white rounded-lg font-semibold hover:bg-primary-red-dark transition disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-primary-red-lighter"
             >
               {loading ? (
                 <span className="flex items-center justify-center">
@@ -187,7 +187,7 @@ export default function SignupPage() {
           <div className="mt-6 text-center">
             <p className="text-sm text-slate-600">
               Already have an account?{' '}
-              <Link href="/login" className="text-red-600 font-medium hover:text-red-700">
+              <Link href="/login" className="text-primary-red font-medium hover:text-primary-red-dark">
                 Sign in
               </Link>
             </p>

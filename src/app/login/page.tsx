@@ -34,7 +34,7 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-indigo-50 via-white to-orange-50 px-4">
+    <div className="min-h-screen flex items-center justify-center bg-linear-to-br from-light-gray via-white to-light-gray px-4">
       <div className="w-full max-w-md">
         <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-8">
           <div className="text-center mb-8">
@@ -49,7 +49,7 @@ export default function LoginPage() {
           </div>
 
           {error && (
-            <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
+            <div className="mb-6 p-4 bg-primary-red-light border border-primary-red text-primary-red text-sm">
               {error}
             </div>
           )}
@@ -60,7 +60,7 @@ export default function LoginPage() {
                 Email
               </label>
               <input
-                className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent transition"
+                className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-red focus:border-transparent transition"
                 type="email"
                 id="email"
                 value={email}
@@ -75,7 +75,7 @@ export default function LoginPage() {
                 Password
               </label>
               <input
-                className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent transition"
+                className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-red focus:border-transparent transition"
                 type="password"
                 id="password"
                 value={password}
@@ -86,7 +86,7 @@ export default function LoginPage() {
             </div>
 
             <button 
-              className="w-full px-4 py-3 text-white bg-red-600 rounded-lg font-medium hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 transition disabled:opacity-50 disabled:cursor-not-allowed" 
+              className="w-full px-4 py-3 text-white bg-primary-red rounded-lg font-medium hover:bg-primary-red-dark focus:outline-none focus:ring-2 focus:ring-primary-red focus:ring-offset-2 transition disabled:opacity-50 disabled:cursor-not-allowed" 
               type="submit"
               disabled={loading}
             >
@@ -97,7 +97,7 @@ export default function LoginPage() {
           <div className="mt-6 text-center">
             <p className="text-sm text-slate-600">
               Don&apos;t have an account?{' '}
-              <Link href="/signup" className="text-red-600 font-medium hover:text-red-700">
+              <Link href="/signup" className="text-primary-red font-medium hover:text-primary-red-dark">
                 Sign up
               </Link>
             </p>

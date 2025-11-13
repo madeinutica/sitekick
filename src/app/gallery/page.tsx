@@ -96,7 +96,7 @@ export default function GalleryPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-linear-to-br from-indigo-50 via-white to-blue-50 flex items-center justify-center">
+      <div className="min-h-screen bg-linear-to-br from-light-gray via-white to-light-gray flex items-center justify-center">
         <div className="text-center">
           <div className="w-16 h-16 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin mx-auto mb-4"></div>
           <p className="text-slate-600">Loading gallery...</p>
@@ -110,7 +110,7 @@ export default function GalleryPage() {
   }
 
   return (
-    <div className="min-h-screen bg-linear-to-br from-indigo-50 via-white to-blue-50">
+    <div className="min-h-screen bg-linear-to-br from-light-gray via-white to-light-gray">
       {/* Header */}
       <header className="bg-white border-b border-slate-200 shadow-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
@@ -144,7 +144,7 @@ export default function GalleryPage() {
           <div className="flex flex-wrap gap-2 mb-6">
             <button
               onClick={() => setFilterType('all')}
-              className={`px-4 py-2 rounded-lg font-medium transition ${
+              className={`px-4 py-2 rounded-lg font-semibold transition ${
                 filterType === 'all'
                   ? 'bg-indigo-600 text-white'
                   : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
@@ -159,7 +159,7 @@ export default function GalleryPage() {
                 <button
                   key={type}
                   onClick={() => setFilterType(type)}
-                  className={`px-4 py-2 rounded-lg font-medium transition capitalize ${
+                  className={`px-4 py-2 rounded-lg font-semibold transition capitalize ${
                     filterType === type
                       ? 'bg-indigo-600 text-white'
                       : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
@@ -241,7 +241,7 @@ export default function GalleryPage() {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
               </svg>
             </div>
-            <h3 className="text-lg font-medium text-slate-900 mb-2">No photos found</h3>
+            <h3 className="text-lg font-semibold text-slate-900 mb-2">No photos found</h3>
             <p className="text-slate-600 mb-4">Photos will appear here once jobs are created and documented</p>
           </div>
         )}

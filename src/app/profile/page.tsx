@@ -27,6 +27,9 @@ export default function ProfilePage() {
   const [company, setCompany] = useState('')
   const [uploading, setUploading] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [changingPassword, setChangingPassword] = useState(false)
+  const [newPassword, setNewPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
   const router = useRouter()
   const supabase = createClient()
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -149,6 +152,49 @@ export default function ProfilePage() {
     setSaving(false)
   }
 
+  const handleChangePassword = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault()
+    if (!user) return
+
+    if (newPassword !== confirmPassword) {
+      alert('New passwords do not match')
+      return
+    }
+
+    if (newPassword.length < 6) {
+      alert('New password must be at least 6 characters long')
+      return
+    }
+
+    setChangingPassword(true)
+
+    try {
+      const { error } = await supabase.auth.updateUser({
+        password: newPassword
+      })
+
+      if (error) {
+        console.error('Error changing password:', error)
+        
+        // Handle specific Supabase errors
+        if (error.message.includes('session') || error.message.includes('auth')) {
+          alert('Your session has expired. Please sign out and sign back in to change your password.')
+        } else {
+          alert(`Failed to change password: ${error.message}`)
+        }
+      } else {
+        alert('Password changed successfully!')
+        setNewPassword('')
+        setConfirmPassword('')
+      }
+    } catch (error) {
+      console.error('Error changing password:', error)
+      alert('Failed to change password. Please try again.')
+    }
+
+    setChangingPassword(false)
+  }
+
   const handleSignOut = async () => {
     await supabase.auth.signOut()
     router.push('/')
@@ -159,15 +205,15 @@ export default function ProfilePage() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-white to-orange-50">
+    <div className="min-h-screen bg-linear-to-br from-light-gray via-white to-light-gray">
       {/* Header */}
       <header className="bg-white border-b border-slate-200 shadow-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-3">
               <Link href="/dashboard">
-                <div className="w-10 h-10 bg-red-100 rounded-lg flex items-center justify-center cursor-pointer">
-                  <svg className="w-6 h-6 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <div className="w-10 h-10 bg-primary-red-light rounded-lg flex items-center justify-center cursor-pointer">
+                  <svg className="w-6 h-6 text-primary-red" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
                   </svg>
                 </div>
@@ -201,8 +247,8 @@ export default function ProfilePage() {
                     unoptimized
                   />
                 ) : (
-                  <div className="w-full h-full flex items-center justify-center bg-red-100">
-                    <svg className="w-16 h-16 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <div className="w-full h-full flex items-center justify-center bg-primary-red-light">
+                    <svg className="w-16 h-16 text-primary-red" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
                     </svg>
                   </div>
@@ -211,7 +257,7 @@ export default function ProfilePage() {
               <button
                 onClick={() => fileInputRef.current?.click()}
                 disabled={uploading}
-                className="absolute bottom-0 right-0 w-10 h-10 bg-red-600 text-white rounded-full flex items-center justify-center hover:bg-red-700 transition shadow-lg disabled:opacity-50"
+                className="absolute bottom-0 right-0 w-10 h-10 bg-primary-red text-white rounded-full flex items-center justify-center hover:bg-primary-red-dark transition shadow-lg disabled:opacity-50"
                 title="Change photo"
               >
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -228,7 +274,7 @@ export default function ProfilePage() {
                 style={{ display: 'none' }}
               />
             </div>
-            {uploading && <p className="text-sm text-red-600">Uploading...</p>}
+            {uploading && <p className="text-sm text-primary-red">Uploading...</p>}
             <p className="text-sm text-slate-600 text-center mt-2">Click the camera icon to change your photo</p>
           </div>
 
@@ -256,7 +302,7 @@ export default function ProfilePage() {
                 placeholder="John Doe"
                 value={fullName}
                 onChange={(e) => setFullName(e.target.value)}
-                className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent"
+                className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-red focus:border-transparent"
               />
             </div>
 
@@ -269,7 +315,7 @@ export default function ProfilePage() {
                 placeholder="(555) 123-4567"
                 value={phone}
                 onChange={(e) => setPhone(e.target.value)}
-                className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent"
+                className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-red focus:border-transparent"
               />
             </div>
 
@@ -282,7 +328,7 @@ export default function ProfilePage() {
                 placeholder="ABC Construction"
                 value={company}
                 onChange={(e) => setCompany(e.target.value)}
-                className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent"
+                className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-red focus:border-transparent"
               />
             </div>
 
@@ -290,7 +336,7 @@ export default function ProfilePage() {
               <button
                 type="submit"
                 disabled={saving}
-                className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg font-medium hover:bg-red-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                className="flex-1 px-4 py-2 bg-primary-red text-white rounded-lg font-medium hover:bg-primary-red-dark transition disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {saving ? 'Saving...' : 'Save Changes'}
               </button>
@@ -302,6 +348,63 @@ export default function ProfilePage() {
                   Cancel
                 </button>
               </Link>
+            </div>
+          </form>
+        </div>
+
+        {/* Password Change Section */}
+        <div className="bg-white rounded-xl border border-slate-200 p-8 shadow-sm mt-6">
+          <h2 className="text-lg font-semibold text-slate-900 mb-6">Change Password</h2>
+          <form onSubmit={handleChangePassword} className="space-y-6">
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-2">
+                New Password
+              </label>
+              <input
+                type="password"
+                placeholder="Enter new password"
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-red focus:border-transparent"
+                required
+                minLength={6}
+              />
+              <p className="text-xs text-slate-500 mt-1">Password must be at least 6 characters long</p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-2">
+                Confirm New Password
+              </label>
+              <input
+                type="password"
+                placeholder="Confirm new password"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-red focus:border-transparent"
+                required
+                minLength={6}
+              />
+            </div>
+
+            <div className="flex space-x-3 pt-4">
+              <button
+                type="submit"
+                disabled={changingPassword || !newPassword || !confirmPassword || newPassword !== confirmPassword}
+                className="flex-1 px-4 py-2 bg-primary-red text-white rounded-lg font-medium hover:bg-primary-red-dark transition disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {changingPassword ? 'Changing...' : 'Change Password'}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setNewPassword('')
+                  setConfirmPassword('')
+                }}
+                className="px-4 py-2 bg-slate-100 text-slate-700 rounded-lg font-medium hover:bg-slate-200 transition"
+              >
+                Clear
+              </button>
             </div>
           </form>
         </div>
