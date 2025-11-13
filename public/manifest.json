@@ -1,0 +1,21 @@
+{
+  "name": "Sitekick - Field Technician App",
+  "short_name": "Sitekick",
+  "description": "Manage client information, job sites, and documentation",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#dc2626",
+  "icons": [
+    {
+      "src": "/images/sitekick-icon.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/images/sitekick-icon.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
