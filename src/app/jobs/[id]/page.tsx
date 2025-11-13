@@ -375,7 +375,7 @@ export default function JobDetailPage() {
 
   const handleSignOut = async () => {
     await supabase.auth.signOut()
-    router.push('/login')
+    router.push('/')
   }
 
   const handleDeleteJob = async () => {
