@@ -43,7 +43,7 @@ export default function JobsPage() {
 
     let query = supabase
       .from('jobs')
-      .select('*, profiles(full_name, avatar_url)')
+      .select('*')
       .order('created_at', { ascending: false })
 
     // If not a super user, filter by user_id
@@ -54,9 +54,27 @@ export default function JobsPage() {
     const { data, error } = await query
 
     if (error) {
-      console.error(error)
+      console.error('Jobs fetch error:', error)
     } else {
-      setJobs(data)
+      // For super users, fetch profiles for each job's user_id
+      if (profile?.is_super_user && data) {
+        const jobsWithProfiles = await Promise.all(
+          data.map(async (job: any) => {
+            const { data: jobProfile } = await supabase
+              .from('profiles')
+              .select('full_name, avatar_url')
+              .eq('id', job.user_id)
+              .maybeSingle()
+            return {
+              ...job,
+              profiles: jobProfile
+            }
+          })
+        )
+        setJobs(jobsWithProfiles)
+      } else {
+        setJobs(data)
+      }
     }
   }, [supabase])
 
