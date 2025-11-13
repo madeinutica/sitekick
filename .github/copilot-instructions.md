@@ -17,6 +17,8 @@
 
 - [x] Ensure Documentation is Complete
 
+- [x] Implement Job Assignment Editing for Super Users
+
 <!--
 ## Execution Guidelines
 PROGRESS TRACKING:
