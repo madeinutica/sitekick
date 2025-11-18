@@ -6,6 +6,7 @@ import { useEffect, useState, useCallback } from 'react'
 import type { User } from '@supabase/supabase-js'
 import Link from 'next/link'
 import Image from 'next/image'
+import SuperAdminSidebar from '@/components/SuperAdminSidebar'
 
 // Force dynamic rendering to avoid static generation issues
 export const dynamic = 'force-dynamic'
@@ -13,24 +14,34 @@ export const dynamic = 'force-dynamic'
 export default function DashboardPage() {
   const [user, setUser] = useState<User | null>(null)
   const [isSuperUser, setIsSuperUser] = useState(false)
+  const [userRoles, setUserRoles] = useState<string[]>([])
   const [profile, setProfile] = useState<{ full_name: string | null; avatar_url: string | null } | null>(null)
   const router = useRouter()
   const supabase = createClient()
 
   const fetchProfileData = useCallback(async (userId: string) => {
+    // Get profile data
     const { data: profileData, error: profileError } = await supabase
       .from('profiles')
-      .select('is_super_user, full_name, avatar_url')
+      .select('full_name, avatar_url')
       .eq('id', userId)
       .maybeSingle()
     
     if (profileError) {
       console.error('Profile error:', profileError)
     } else if (profileData) {
-      console.log('Home page - Profile loaded:', profileData)
-      setIsSuperUser(profileData.is_super_user || false)
       setProfile(profileData)
     }
+
+    // Get user roles
+    const { data: userRolesData } = await supabase
+      .from('user_roles')
+      .select('roles(name)')
+      .eq('user_id', userId)
+    
+    const roles = (userRolesData as unknown as { roles: { name: string } }[])?.map(ur => ur.roles?.name).filter(Boolean) || []
+    setUserRoles(roles)
+    setIsSuperUser(roles.includes('super_admin'))
   }, [supabase])
 
   useEffect(() => {
@@ -89,7 +100,7 @@ export default function DashboardPage() {
                   </div>
                 )}
                 <span className="text-sm font-medium text-slate-700">
-                  {profile?.full_name || user?.email?.split('@')[0] || 'Profile'}
+                  {profile?.full_name || 'Name'}
                 </span>
               </Link>
               <button
@@ -105,6 +116,14 @@ export default function DashboardPage() {
 
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <div className="flex gap-8">
+          {/* Super Admin Sidebar */}
+          {isSuperUser && (
+            <SuperAdminSidebar className="hidden lg:block fixed left-0 top-20 h-full w-64" />
+          )}
+
+          {/* Main Content Area */}
+          <div className={`flex-1 ${isSuperUser ? 'lg:ml-64' : ''}`}>
         <div className="mb-8">
           <h2 className="text-3xl font-bold text-slate-900 mb-2">
             Welcome back{profile?.full_name ? `, ${profile.full_name.split(' ')[0]}` : ''}!
@@ -130,21 +149,23 @@ export default function DashboardPage() {
             </div>
           </Link>
 
-          <Link href="/gallery">
-            <div className="bg-white rounded-xl border border-slate-200 p-6 hover:shadow-md transition cursor-pointer">
-              <div className="flex items-center space-x-4">
-                <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center">
-                  <svg className="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                  </svg>
-                </div>
-                <div>
-                  <h3 className="text-lg font-semibold text-slate-900">Gallery</h3>
-                  <p className="text-slate-600 text-sm">View all your photos</p>
+          {!userRoles.includes('installer') && !userRoles.includes('measure_tech') && (
+            <Link href="/gallery">
+              <div className="bg-white rounded-xl border border-slate-200 p-6 hover:shadow-md transition cursor-pointer">
+                <div className="flex items-center space-x-4">
+                  <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center">
+                    <svg className="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                    </svg>
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-semibold text-slate-900">Gallery</h3>
+                    <p className="text-slate-600 text-sm">View all your photos</p>
+                  </div>
                 </div>
               </div>
-            </div>
-          </Link>
+            </Link>
+          )}
 
           <div className="bg-white rounded-xl border border-slate-200 p-6 opacity-50">
             <div className="flex items-center space-x-4">
@@ -184,6 +205,8 @@ export default function DashboardPage() {
 
         {/* Notes Section */}
           {/* Notes Section removed */}
+          </div>
+        </div>
       </main>
     </div>
   )

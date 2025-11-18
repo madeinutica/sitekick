@@ -1,4 +1,12 @@
 <!-- Use this file to provide workspace-specific custom instructions to Copilot. For more details, visit https://code.visualstudio.com/docs/copilot/copilot-customization#_use-a-githubcopilotinstructionsmd-file -->
+- [x] Add Mapbox access token to environment variables
+  - **COMPLETED**: Added NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN placeholder to .env.local file. User needs to replace with actual Mapbox access token.
+- [x] Implement geocoding function to convert job addresses to coordinates using Mapbox API
+  - **COMPLETED**: Added geocodeAddress function that uses Mapbox Geocoding API to convert job addresses to latitude/longitude coordinates. Function handles loading states and error cases.
+- [x] Create map component in job detail page to display geocoded location
+  - **COMPLETED**: Added Location section to job detail page that displays an interactive Mapbox map with a marker at the geocoded job address. Map shows when address is available and coordinates are successfully geocoded.
+- [x] Integrate map display with address updates
+  - **COMPLETED**: Updated handleUpdateJobField function to automatically geocode new addresses when job addresses are edited, ensuring the map updates in real-time.
 - [x] Verify that the copilot-instructions.md file in the .github directory is created.
 
 - [x] Clarify Project Requirements
@@ -29,6 +37,70 @@
 
 - [x] Ensure consistent use of custom color palette throughout the application
 - [x] Update typography to use Inter as primary font with proper weight guidelines (Headings: Bold/SemiBold, Body: Regular/Medium)
+- [x] Fix comment posting functionality by correcting database table references from 'job_notes' to 'notes'
+  - **COMPLETED**: Fixed Row Level Security (RLS) policies on notes table that were preventing users from viewing comments. Created simplified policies allowing job owners and super users to view/insert/update/delete notes. Added debugging logs to identify the issue, then cleaned up the code.
+- [x] Implement granular role-based access control system with specific roles (Rep, Brand Ambassador, Measure Tech, Installer) having different permissions for jobs and photos
+  - **COMPLETED**: Database migration with roles, user_roles, and project_user_roles tables implemented. Frontend updated to use role-based logic instead of is_super_user boolean. RLS policies fixed to resolve infinite recursion, allowing super admins to view all jobs. Jobs page now displays jobs correctly for super users.
+- [x] Add the ability to assign multiple users to a job
+  - **COMPLETED**: Updated job creation form to allow selecting multiple users with checkboxes. Modified database operations to insert assignments into project_user_roles table. Updated job fetching to include assigned users from project_user_roles. Enhanced job display to show multiple assigned users with avatar stack. Added comprehensive RLS policies for project_user_roles table to control access to job assignments.
+- [x] Implement multiple user assignment editing for job detail pages
+  - **COMPLETED**: Updated job detail page to support editing multiple user assignments. Changed from single select dropdown to multi-select checkboxes. Modified state management to handle arrays of assigned user IDs. Updated database operations to delete existing assignments and insert new ones in project_user_roles table. Added proper error handling and UI feedback for assignment updates. Fixed type consistency issues with project_id parsing that were preventing assignments from registering.
+- [x] Show avatars of assigned users to jobs above photos section
+  - **COMPLETED**: Added an "Assigned Team" section above the photos section in job detail pages. Displays avatar stack of assigned users with overflow indicator (+N more). Shows individual user cards below with full names and avatars. Only displays when there are assigned users.
+- [x] Fix user assignment persistence issue by allowing job owners to manage assignments
+  - **COMPLETED**: Updated frontend role checking logic to allow job owners (not just super admins and brand ambassadors) to edit job assignments, job names, addresses, and delete photos. Added separate useEffect to fetch users for assignment when user is job owner. Updated all UI condition checks throughout the job detail page to include job owner permissions. This resolves the assignment persistence issue by ensuring job owners can access the assignment management interface and perform database operations allowed by existing RLS policies.
+- [x] Restrict assignment editing to only super_admin and brand_ambassador roles
+  - **COMPLETED**: Removed job owner permissions from all assignment editing, job name editing, address editing, and photo deletion UI conditions. Updated user fetching logic to only load users for assignment when user has super_admin role. Removed unused isSuperUser state variable. All permission checks now only allow super_admin and brand_ambassador roles to access editing features. Application compiles successfully.
+- [x] Restrict job assignment to only super admin (remove brand ambassador permissions)
+  - **COMPLETED**: Updated simplified_roles.sql RLS policies to remove 'brand_ambassador' from job_assignments management policies. Updated frontend code in jobs/[id]/page.tsx to only allow super_admin for user assignment, job name editing, address editing, and photo deletion. Application compiles successfully.
+- [x] Fix jobs fetch error caused by invalid nested Supabase query syntax
+  - **COMPLETED**: Fixed the jobs page fetchJobs function that was using an invalid nested query in the `or` condition. Separated the assigned job IDs fetch into a separate query before using them in the main jobs query. Added proper TypeScript typing to resolve compilation errors. Application builds successfully without errors.
+- [x] Fix infinite recursion in RLS policies between jobs and job_assignments tables
+  - **COMPLETED**: Identified that the job_assignments RLS policy was referencing the jobs table, creating circular dependency. Removed the job ownership check from job_assignments policies to prevent infinite recursion. Simplified job_assignments policies to only allow super admins and assigned users to view/manage assignments. Updated jobs policy to properly check assignments without circular references. Application should now load without 500 errors.
+- [x] Show avatars of all assigned users on job cards
+  - **COMPLETED**: Updated job cards to display avatars of all assigned users instead of limiting to 3 with a "+N more" indicator. Made avatars smaller (20px) and adjusted spacing to accommodate more users in the available space. All assigned users are now visible on each job card.
+- [x] Add super admin sidebar with admin link and other easily accessible links, integrated with current jobs page sidebar
+  - **COMPLETED**: Created SuperAdminSidebar component with admin links (User Management, Photo Gallery, Dashboard) and quick actions (All Jobs, Profile). Integrated both SuperAdminSidebar and existing user filter sidebar on jobs page for super admin users. Updated layout to accommodate both sidebars with proper spacing (lg:ml-128). Application compiles successfully.
+- [x] Add SuperAdminSidebar to dashboard page
+  - **COMPLETED**: Integrated SuperAdminSidebar into dashboard page for super admin users. Added sidebar with proper spacing (lg:ml-64) and maintained existing dashboard functionality. Application compiles successfully.
+- [x] Consolidate user filtering functionality into SuperAdminSidebar to eliminate duplicate sidebars on jobs page
+  - **COMPLETED**: Added user filtering section to SuperAdminSidebar component that conditionally renders when on jobs page. Updated jobs page to pass user filtering props (users, userFilter, setUserFilter, jobs) to SuperAdminSidebar. Removed separate user filter sidebar and mobile dropdown from jobs page. Cleaned up unused state variables and imports. Updated layout spacing from lg:ml-128 to lg:ml-64. Application compiles successfully.
+- [x] Fix user assignment insertion error by adding assigned_by field
+  - **COMPLETED**: Fixed null value error in project_user_roles table by adding assigned_by: user.id to all assignment insertions in both job creation (jobs/page.tsx) and job detail editing (jobs/[id]/page.tsx). The assigned_by field is required and references the user making the assignment. Application compiles successfully.
+- [x] Fix Supabase query syntax error in assignment refresh queries
+  - **COMPLETED**: Fixed 400 Bad Request errors in assignment refresh queries by replacing join syntax with separate queries. Changed from 'profiles!inner(full_name, avatar_url)' to fetching project_user_roles first, then fetching profiles separately for each user_id using Promise.all. This avoids Supabase schema cache relationship issues. Fixed in all four locations: initial fetch (line 438), handleUpdateJobField refresh (line 698), mobile assignment update refresh (line 1065), and desktop assignment update refresh (line 1311). Application builds successfully without errors.
+- [x] Move user filter dropdown to above jobs list on jobs page
+  - **COMPLETED**: Removed user filtering functionality from SuperAdminSidebar component. Added a dropdown filter above the jobs list on the jobs page, positioned right before the "Add Job" button. The dropdown shows user names with job counts and allows filtering by specific users or all users. Updated SuperAdminSidebar interface to remove user filtering props. Application compiles successfully.
+- [x] Fix installer role job visibility issue by updating jobs RLS policy
+  - **COMPLETED**: Identified that the jobs RLS policy was missing a condition to check for global user_roles with 'assigned_or_created' permissions when users are assigned to jobs. Added the missing condition to combined_rls_fix.sql that allows users with global roles (like installer) having 'assigned_or_created' permissions to view jobs they're assigned to via project_user_roles. The database needs to be reset to apply these changes.
+- [x] Simplify role system by replacing project_user_roles with job_assignments table
+  - **COMPLETED**: Created simplified_roles.sql migration file that drops the complex project_user_roles table and replaces it with a simple job_assignments table. Updated all frontend code to use job_assignments instead of project_assignments. Removed all projectRoles state variables and references. Simplified permission checks to only use global userRoles. Updated canComment logic to use global roles. Application compiles successfully without errors.
+- [x] Restrict job creation to super admin only
+  - **COMPLETED**: Removed "Add Job" buttons from all non-super admin users. Only super admin users can now see and access job creation functionality. Updated the "No jobs yet" section to show different messages for super admins (with "Add Your First Job" button) vs regular users (with "Contact your administrator" message). Application compiles successfully.
+- [x] Show avatars of all assigned users on job pages with hover tooltips showing name and role
+  - **COMPLETED**: Updated assigned users data fetching to include user roles in all assignment update locations (initial fetch, mobile assignment update, desktop assignment update). Modified assignedUsers state type to include role field. Implemented avatar display section above photos with hover tooltips showing full name and role. Application compiles successfully without errors.
+- [x] Show all assigned users avatars on jobs page for super admin instead of job owner avatar
+  - **COMPLETED**: Modified job cards on jobs page to display avatars of all assigned users (up to 3 with overflow indicator) instead of showing the job owner's avatar. Updated the layout to show assigned user count and removed the redundant small avatar display below. Application compiles successfully.
+- [x] Show assigned users avatars on job cards for all user roles
+  - **COMPLETED**: Updated jobs page to fetch and display assigned users' avatars for all user roles, not just super admins. Modified fetchJobs function to retrieve assigned users data for all users and updated job card display logic to show assigned users avatars for everyone. Application compiles successfully.
+- [x] Update gallery header text to show different descriptions based on user role
+  - **COMPLETED**: Updated gallery page header to display "All photos from every job" for brand ambassadors and super admins, and "All photos from your jobs" for other users. Application compiles successfully.
+- [x] Allow all users to see all photos uploaded to specific jobs
+  - **COMPLETED**: Updated job_photos RLS policy to allow all users to view photos from jobs they have access to (own, assigned to, or have global permissions for). Simplified gallery page to fetch all accessible photos without role-based filtering. Updated header text to "All photos from your accessible jobs". Application compiles successfully.
+- [x] Add uploader avatar to photo corner in gallery
+  - **COMPLETED**: Updated gallery page to fetch uploader avatar from profiles table, added 20x20px avatar display in bottom left corner of each photo with white border and shadow. Application compiles successfully.
+- [x] Allow brand ambassadors to see all photos in gallery like super users
+  - **COMPLETED**: Updated job_photos RLS policy to allow brand ambassadors to view all photos. Modified gallery header to show "All photos from every job" for brand ambassadors and super admins. Application compiles successfully.
+- [x] Diagnosed gallery photos not showing issue
+  - **COMPLETED**: Identified that the simplified_roles.sql migration needs to be applied to the database. Updated gallery query to use left join for profiles to prevent missing photos. Application compiles successfully.
+- [x] Fixed gallery photo fetching error
+  - **COMPLETED**: Fixed Supabase query relationship syntax by fetching profiles separately instead of using complex joins. Updated TypeScript types to include user_id field. Application compiles successfully.
+- [x] Fix jobs not showing up due to assignment migration issue
+  - **COMPLETED**: Uncommented the migration script in simplified_roles.sql to migrate existing assignments from project_user_roles to job_assignments table. Fixed assignment fetching query in jobs page to use separate queries instead of join syntax. Jobs with existing assigned users now display properly in filtering.
+- [x] Fix address editing issue by correcting database query parameters from string to integer
+  - **COMPLETED**: Fixed all database queries in src/app/jobs/[id]/page.tsx to use parseInt(jobId as string) instead of jobId directly. This resolves the issue where addresses weren't saving due to type mismatch between URL string parameters and integer database IDs. Fixed queries in fetchJob, fetchPhotos, handleUpdateJobField, handleDeleteJob, fetchNotes, handleAddNote, and assignment update functions. Application builds successfully without errors.
+- [x] Fix super admin job deletion by adding CASCADE DELETE constraints
+  - **COMPLETED**: Identified that photo_tags table was missing CASCADE DELETE constraint, preventing job deletion when photos had tags. Added CASCADE DELETE to all foreign key constraints (job_assignments, job_photos, notes, photo_tags) and ensured super admin DELETE policy is properly configured. Job deletion now works for super admin users.
 PROGRESS TRACKING:
 - If any tools are available to manage the above todo list, use it to track progress through this checklist.
 - After completing each step, mark it complete and add a summary.

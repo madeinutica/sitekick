@@ -9,30 +9,86 @@ import Link from 'next/link'
 // Force dynamic rendering to avoid static generation issues
 export const dynamic = 'force-dynamic'
 
-type Profile = {
+type UserWithRoles = {
   id: string
   full_name: string | null
-  is_super_user: boolean
+  email: string
+  roles: string[]
+}
+
+type Role = {
+  id: number
+  name: string
+  description: string | null
 }
 
 export default function AdminPage() {
   const [user, setUser] = useState<User | null>(null)
-  const [profiles, setProfiles] = useState<Profile[]>([])
-  const [isSuperUser, setIsSuperUser] = useState(false)
+  const [users, setUsers] = useState<UserWithRoles[]>([])
+  const [roles, setRoles] = useState<Role[]>([])
+  const [isSuperAdmin, setIsSuperAdmin] = useState(false)
+  const [loading, setLoading] = useState(true)
   const router = useRouter()
   const supabase = createClient()
 
-  const fetchProfiles = useCallback(async () => {
-    const { data, error } = await supabase
-      .from('profiles')
-      .select('id, full_name, is_super_user')
-      .order('full_name', { ascending: true })
+  const fetchUsersAndRoles = useCallback(async () => {
+    setLoading(true)
     
-    if (error) {
-      console.error(error)
-    } else {
-      setProfiles(data || [])
+    // Fetch all roles
+    const { data: rolesData, error: rolesError } = await supabase
+      .from('roles')
+      .select('*')
+      .order('name')
+    
+    if (rolesError) {
+      console.error('Error fetching roles:', rolesError)
+      return
     }
+    
+    setRoles(rolesData || [])
+
+    // Fetch all users with their roles
+    const { data: usersData, error: usersError } = await supabase
+      .from('profiles')
+      .select('id, full_name')
+      .order('full_name')
+    
+    if (usersError) {
+      console.error('Error fetching users:', usersError)
+      return
+    }
+
+    // For each user, fetch their roles
+    const usersWithRoles = await Promise.all(
+      (usersData || []).map(async (profile: { id: string; full_name: string | null }) => {
+        // First get role_ids
+        const { data: userRoleIds } = await supabase
+          .from('user_roles')
+          .select('role_id')
+          .eq('user_id', profile.id)
+        
+        let roleNames: string[] = []
+        if (userRoleIds && userRoleIds.length > 0) {
+          const roleIds = userRoleIds.map((ur: { role_id: number }) => ur.role_id)
+          const { data: rolesData } = await supabase
+            .from('roles')
+            .select('name')
+            .in('id', roleIds)
+          roleNames = rolesData?.map((r: { name: string }) => r.name).filter(Boolean) || []
+        }
+        
+        // Get email from auth.users (this might not work due to RLS, so we'll use a placeholder)
+        return {
+          id: profile.id,
+          full_name: profile.full_name,
+          email: 'N/A', // Email not accessible client-side
+          roles: roleNames
+        }
+      })
+    )
+    
+    setUsers(usersWithRoles)
+    setLoading(false)
   }, [supabase])
 
   useEffect(() => {
@@ -43,36 +99,90 @@ export default function AdminPage() {
       } else {
         setUser(data.user)
         
-        // Check if current user is a super user
-        const { data: profile } = await supabase
-          .from('profiles')
-          .select('is_super_user')
-          .eq('id', data.user.id)
-          .maybeSingle()
+        // Check if current user is a super admin
+        // First, get the user's role_ids
+        console.log('Checking user authentication:', { user: data.user, userId: data.user.id })
         
-        if (profile?.is_super_user) {
-          setIsSuperUser(true)
-          fetchProfiles()
+        const { data: userRoleIds, error: roleIdsError } = await supabase
+          .from('user_roles')
+          .select('role_id')
+          .eq('user_id', data.user.id)
+        
+        console.log('User role IDs query result:', { userRoleIds, roleIdsError, userId: data.user.id })
+        console.log('Error details:', JSON.stringify(roleIdsError, null, 2))
+        
+        if (roleIdsError) {
+          console.error('Error fetching user role IDs:', roleIdsError)
+          alert(`Error checking permissions: ${roleIdsError.message || 'Unknown error'}. Please try again.`)
+          router.push('/')
+          return
+        }
+        
+        if (!userRoleIds || userRoleIds.length === 0) {
+          console.log('No role IDs found for user')
+          alert('Access denied: Super admin privileges required. Your roles: none')
+          router.push('/')
+          return
+        }
+        
+        // Now get the role names for these IDs
+        const roleIds = userRoleIds.map((ur: { role_id: number }) => ur.role_id)
+        const { data: rolesData, error: rolesDataError } = await supabase
+          .from('roles')
+          .select('name')
+          .in('id', roleIds)
+        
+        console.log('Roles data query result:', { rolesData, rolesDataError, roleIds })
+        
+        const roleNames = rolesData?.map((r: { name: string }) => r.name).filter(Boolean) || []
+        
+        console.log('Final role names:', roleNames)
+        console.log('Is super admin?', roleNames.includes('super_admin'))
+        
+        if (roleNames.includes('super_admin')) {
+          setIsSuperAdmin(true)
+          fetchUsersAndRoles()
         } else {
-          alert('Access denied: Super user privileges required')
+          alert(`Access denied: Super admin privileges required. Your roles: ${roleNames.join(', ') || 'none'}`)
           router.push('/')
         }
       }
     }
     checkUser()
-  }, [router, supabase, fetchProfiles])
+  }, [router, supabase, fetchUsersAndRoles])
 
-  const toggleSuperUser = async (profileId: string, currentStatus: boolean) => {
+  const assignRole = async (userId: string, roleName: string) => {
+    const role = roles.find(r => r.name === roleName)
+    if (!role) return
+
     const { error } = await supabase
-      .from('profiles')
-      .update({ is_super_user: !currentStatus })
-      .eq('id', profileId)
+      .from('user_roles')
+      .insert({ user_id: userId, role_id: role.id })
+      .select()
     
     if (error) {
-      console.error(error)
-      alert('Error updating super user status')
+      console.error('Error assigning role:', error)
+      alert(`Error assigning role: ${error.message}`)
     } else {
-      fetchProfiles()
+      fetchUsersAndRoles()
+    }
+  }
+
+  const removeRole = async (userId: string, roleName: string) => {
+    const role = roles.find(r => r.name === roleName)
+    if (!role) return
+
+    const { error } = await supabase
+      .from('user_roles')
+      .delete()
+      .eq('user_id', userId)
+      .eq('role_id', role.id)
+    
+    if (error) {
+      console.error('Error removing role:', error)
+      alert(`Error removing role: ${error.message}`)
+    } else {
+      fetchUsersAndRoles()
     }
   }
 
@@ -81,8 +191,15 @@ export default function AdminPage() {
     router.push('/')
   }
 
-  if (!isSuperUser) {
-    return null
+  if (!isSuperAdmin || loading) {
+    return (
+      <div className="min-h-screen bg-linear-to-br from-light-gray via-white to-light-gray flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-red mx-auto"></div>
+          <p className="mt-4 text-gray-600">Loading admin panel...</p>
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -97,7 +214,7 @@ export default function AdminPage() {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
                 </svg>
               </Link>
-              <h1 className="text-2xl font-bold bg-gradient-to-r from-red-600 to-orange-600 bg-clip-text text-transparent">
+              <h1 className="text-2xl font-bold bg-linear-to-r from-red-600 to-orange-600 bg-clip-text text-transparent">
                 Admin Panel
               </h1>
             </div>
@@ -115,8 +232,8 @@ export default function AdminPage() {
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="bg-white rounded-xl shadow-lg border border-gray-100 overflow-hidden">
           <div className="px-6 py-4 border-b border-gray-200">
-            <h2 className="text-lg font-semibold text-gray-900">User Management</h2>
-            <p className="text-sm text-gray-600 mt-1">Manage super user access for all profiles</p>
+            <h2 className="text-lg font-semibold text-gray-900">User Role Management</h2>
+            <p className="text-sm text-gray-600 mt-1">Assign and manage roles for all users</p>
           </div>
           
           <div className="overflow-x-auto">
@@ -130,55 +247,69 @@ export default function AdminPage() {
                     User ID
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Super User
+                    Current Roles
                   </th>
-                  <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Actions
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Assign Role
                   </th>
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
-                {profiles.map((profile) => (
-                  <tr key={profile.id} className="hover:bg-gray-50">
+                {users.map((userData) => (
+                  <tr key={userData.id} className="hover:bg-gray-50">
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="text-sm font-medium text-gray-900">
-                        {profile.full_name || 'No name set'}
+                        {userData.full_name || 'No name set'}
                       </div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="text-sm text-gray-500 font-mono">
-                        {profile.id.slice(0, 8)}...
+                        {userData.id.slice(0, 8)}...
                       </div>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      {profile.is_super_user ? (
-                        <span className="px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full bg-red-100 text-green-800">
-                          Yes
-                        </span>
-                      ) : (
-                        <span className="px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full bg-gray-100 text-gray-800">
-                          No
-                        </span>
-                      )}
+                    <td className="px-6 py-4">
+                      <div className="flex flex-wrap gap-1">
+                        {userData.roles.length > 0 ? (
+                          userData.roles.map((roleName) => (
+                            <span key={roleName} className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                              {roleName}
+                              {userData.id !== user?.id && (
+                                <button
+                                  onClick={() => removeRole(userData.id, roleName)}
+                                  className="ml-1 text-blue-600 hover:text-blue-800"
+                                  title={`Remove ${roleName} role`}
+                                >
+                                  ×
+                                </button>
+                              )}
+                            </span>
+                          ))
+                        ) : (
+                          <span className="text-sm text-gray-500">No roles assigned</span>
+                        )}
+                      </div>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                      <button
-                        onClick={() => toggleSuperUser(profile.id, profile.is_super_user)}
-                        disabled={profile.id === user?.id}
-                        className={`${
-                          profile.id === user?.id
-                            ? 'text-gray-400 cursor-not-allowed'
-                            : profile.is_super_user
-                            ? 'text-red-600 hover:text-red-900'
-                            : 'text-red-600 hover:text-red-900'
-                        } transition`}
+                    <td className="px-6 py-4">
+                      <select
+                        onChange={(e) => {
+                          if (e.target.value) {
+                            assignRole(userData.id, e.target.value)
+                            e.target.value = '' // Reset select
+                          }
+                        }}
+                        disabled={userData.id === user?.id}
+                        className="text-sm border border-gray-300 rounded-md px-2 py-1 focus:outline-none focus:ring-2 focus:ring-primary-red focus:border-transparent disabled:opacity-50"
                       >
-                        {profile.id === user?.id
-                          ? '(You)'
-                          : profile.is_super_user
-                          ? 'Revoke Access'
-                          : 'Grant Access'}
-                      </button>
+                        <option value="">Select role...</option>
+                        {roles
+                          .filter(role => !userData.roles.includes(role.name))
+                          .map((role) => (
+                            <option key={role.id} value={role.name}>
+                              {role.name} - {role.description}
+                            </option>
+                          ))
+                        }
+                      </select>
                     </td>
                   </tr>
                 ))}
@@ -187,9 +318,9 @@ export default function AdminPage() {
           </div>
         </div>
 
-        {profiles.length === 0 && (
+        {users.length === 0 && !loading && (
           <div className="text-center py-12">
-            <p className="text-gray-500">No profiles found</p>
+            <p className="text-gray-500">No users found</p>
           </div>
         )}
       </main>

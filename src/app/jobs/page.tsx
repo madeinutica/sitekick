@@ -2,10 +2,11 @@
 
 import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
-import { useEffect, useState, useCallback, useRef } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import type { User } from '@supabase/supabase-js'
 import Link from 'next/link'
 import Image from 'next/image'
+import SuperAdminSidebar from '@/components/SuperAdminSidebar'
 
 // Force dynamic rendering to avoid static generation issues
 export const dynamic = 'force-dynamic'
@@ -18,6 +19,7 @@ type Job = {
   created_at: string
   user_id: string
   profiles?: { full_name: string | null; avatar_url: string | null }
+  assignedUsers?: { id: string; full_name: string | null; avatar_url: string | null }[]
 }
 
 export default function JobsPage() {
@@ -29,60 +31,107 @@ export default function JobsPage() {
   const [showForm, setShowForm] = useState(false)
   const [profile, setProfile] = useState<{ full_name: string | null; avatar_url: string | null } | null>(null)
   const [isSuperUser, setIsSuperUser] = useState(false)
-  const [selectedUserId, setSelectedUserId] = useState('')
+  const [selectedUserIds, setSelectedUserIds] = useState<string[]>([])
   const [users, setUsers] = useState<{ id: string; full_name: string | null; email: string; avatar_url: string | null }[]>([])
   const [userFilter, setUserFilter] = useState<string>('all')
-  const [showUserDropdown, setShowUserDropdown] = useState(false)
-  const dropdownRef = useRef<HTMLDivElement>(null)
   const router = useRouter()
   const supabase = createClient()
 
   // Filter jobs based on selected user
-  const filteredJobs = userFilter === 'all' 
-    ? jobs 
-    : jobs.filter(job => job.user_id === userFilter)
+  const filteredJobs = userFilter === 'all'
+    ? jobs
+    : jobs.filter(job =>
+        job.assignedUsers && job.assignedUsers.some(user => user.id === userFilter)
+      )
 
   const fetchJobs = useCallback(async (userId: string) => {
-    // First check if user is a super user
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('is_super_user')
-      .eq('id', userId)
-      .single()
+    // Get user roles first
+    const { data: userRolesData } = await supabase
+      .from('user_roles')
+      .select('roles(name)')
+      .eq('user_id', userId)
+    
+    const roles = (userRolesData as unknown as { roles: { name: string } }[])?.map(ur => ur.roles?.name).filter(Boolean) || []
+    const isSuperUser = roles.includes('super_admin')
 
     let query = supabase
       .from('jobs')
       .select('*')
       .order('created_at', { ascending: false })
 
-    // If not a super user, filter by user_id
-    if (!profile?.is_super_user) {
-      query = query.eq('user_id', userId)
+    // If not a super user, filter by user_id or job_assignments
+    if (!isSuperUser) {
+      // First get the job IDs the user is assigned to
+      const { data: assignedJobIds } = await supabase
+        .from('job_assignments')
+        .select('job_id')
+        .eq('user_id', userId)
+      
+      const assignedJobIdList = (assignedJobIds as { job_id: number }[] | null)?.map((a: { job_id: number }) => a.job_id) || []
+      console.log('User assignments for', userId, ':', assignedJobIdList)
+      
+      // Filter jobs where user is owner OR assigned
+      const orConditions = [`user_id.eq.${userId}`]
+      if (assignedJobIdList.length > 0) {
+        orConditions.push(`id.in.(${assignedJobIdList.join(',')})`)
+      }
+      query = query.or(orConditions.join(','))
     }
 
     const { data, error } = await query
 
     if (error) {
       console.error('Jobs fetch error:', error)
+      console.error('Error details:', JSON.stringify(error, null, 2))
     } else {
-      // For super users, fetch profiles for each job's user_id
-      if (profile?.is_super_user && data) {
+      console.log('Fetched jobs:', data?.length || 0)
+      // Fetch profiles and assigned users for all jobs
+      if (data) {
         const jobsWithProfiles = await Promise.all(
           data.map(async (job: { id: string; job_name: string; address: string | null; installation_info: string | null; user_id: string; profiles: { full_name: string | null; avatar_url: string | null } | null }) => {
+            // Get job creator profile
             const { data: jobProfile } = await supabase
               .from('profiles')
               .select('full_name, avatar_url')
               .eq('id', job.user_id)
               .maybeSingle()
+            
+            // Get assigned users for this job
+            const { data: assignmentsData } = await supabase
+              .from('job_assignments')
+              .select('user_id')
+              .eq('job_id', job.id)
+            
+            let assignedUsers: { id: string; full_name: string | null; avatar_url: string | null }[] = []
+            if (assignmentsData && assignmentsData.length > 0) {
+              const userIds = assignmentsData.map((a: { user_id: string }) => a.user_id)
+              const { data: profilesData } = await supabase
+                .from('profiles')
+                .select('id, full_name, avatar_url')
+                .in('id', userIds)
+              
+              assignedUsers = assignmentsData.map((assignment: { user_id: string }) => {
+                const profile = profilesData?.find((p: { id: string; full_name: string | null; avatar_url: string | null }) => p.id === assignment.user_id)
+                return {
+                  id: assignment.user_id,
+                  full_name: profile?.full_name,
+                  avatar_url: profile?.avatar_url
+                }
+              })
+            }
+            
+            console.log(`Job ${job.id} (${job.job_name}): ${assignedUsers.length} assigned users`)
             return {
               ...job,
-              profiles: jobProfile
+              profiles: jobProfile,
+              assignedUsers
             }
           })
         )
+        console.log('Final jobs with assignments:', jobsWithProfiles.map(j => ({ id: j.id, name: j.job_name, assigned: j.assignedUsers.length })))
         setJobs(jobsWithProfiles)
       } else {
-        setJobs(data)
+        setJobs([])
       }
     }
   }, [supabase])
@@ -105,18 +154,26 @@ export default function JobsPage() {
         
         if (profileData) {
           setProfile(profileData)
-          setIsSuperUser(profileData.is_super_user || false)
+          
+          // Get user roles
+          const { data: userRolesData } = await supabase
+            .from('user_roles')
+            .select('roles(name)')
+            .eq('user_id', data.user.id)
+          
+          const roles = (userRolesData as unknown as { roles: { name: string } }[])?.map(ur => ur.roles?.name).filter(Boolean) || []
+          setIsSuperUser(roles.includes('super_admin'))
           
           // If super user, fetch all users for assignment
-          if (profileData.is_super_user) {
+          if (roles.includes('super_admin')) {
             const { data: usersData } = await supabase
               .from('profiles')
-              .select('id, full_name, avatar_url')
-              .order('full_name')
+              .select('id, name, avatar_url')
+              .order('name')
             if (usersData) {
-              setUsers(usersData.map((profile: { id: string; full_name: string | null; email: string; avatar_url: string | null }) => ({
+              setUsers(usersData.map((profile: { id: string; name: string | null; email: string; avatar_url: string | null }) => ({
                 id: profile.id,
-                full_name: profile.full_name,
+                name: profile.name,
                 email: '', // Email not accessible client-side
                 avatar_url: profile.avatar_url
               })))
@@ -128,45 +185,54 @@ export default function JobsPage() {
     checkUser()
   }, [router, supabase, fetchJobs])
 
-  // Handle clicking outside dropdown to close it
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
-        setShowUserDropdown(false)
-      }
-    }
-
-    if (showUserDropdown) {
-      document.addEventListener('mousedown', handleClickOutside)
-    }
-
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside)
-    }
-  }, [showUserDropdown])
-
   const handleAddJob = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
     if (!user) return
-    const assignedUserId = isSuperUser && selectedUserId ? selectedUserId : user.id
-    const { error } = await supabase
+    
+    // Create the job first
+    const { data: jobData, error: jobError } = await supabase
       .from('jobs')
       .insert({ 
         job_name: jobName, 
         installation_info: installationInfo,
         address: address,
-        user_id: assignedUserId 
+        user_id: user.id // Keep the creator as user_id
       })
-    if (error) {
-      console.error(error)
-    } else {
-      fetchJobs(user.id)
-      setJobName('')
-      setInstallationInfo('')
-      setAddress('')
-      setSelectedUserId('')
-      setShowForm(false)
+      .select()
+      .single()
+    
+    if (jobError) {
+      console.error(jobError)
+      return
     }
+
+    // If super user and users selected, assign them to the job
+    if (isSuperUser && selectedUserIds.length > 0) {
+      const assignments = selectedUserIds.map(userId => ({
+        job_id: jobData.id,
+        user_id: userId,
+        assigned_by: user.id
+      }))
+      
+      console.log('Creating assignments:', assignments)
+      const { error: assignmentError } = await supabase
+        .from('job_assignments')
+        .insert(assignments)
+      
+      if (assignmentError) {
+        console.error('Error assigning users:', assignmentError)
+        // Still continue since job was created
+      } else {
+        console.log('Assignments created successfully')
+      }
+    }
+
+    fetchJobs(user.id)
+    setJobName('')
+    setInstallationInfo('')
+    setAddress('')
+    setSelectedUserIds([])
+    setShowForm(false)
   }
 
   const handleDeleteJob = async (jobId: number, e: React.MouseEvent) => {
@@ -233,7 +299,7 @@ export default function JobsPage() {
                   </div>
                 )}
                 <span className="text-sm font-medium text-slate-700">
-                  {profile?.full_name || user?.email?.split('@')[0] || 'Profile'}
+                  {profile?.name || 'Name'}
                 </span>
               </Link>
               <button
@@ -249,198 +315,14 @@ export default function JobsPage() {
 
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className={`flex gap-8 ${isSuperUser ? 'lg:ml-64' : ''}`}>
-          {/* Sidebar - Only for Super Users on Desktop */}
+        <div className="flex gap-8">
+          {/* Super Admin Sidebar */}
           {isSuperUser && (
-            <div className="hidden lg:block fixed left-0 top-20 h-full w-64 bg-white border-r border-slate-200 p-6 shadow-sm">
-              <h3 className="text-lg font-semibold text-slate-900 mb-4">Filter by User</h3>
-              
-              {/* All Users Button */}
-              <button
-                onClick={() => setUserFilter('all')}
-                className={`w-full flex items-center gap-3 p-3 rounded-lg mb-2 transition ${
-                  userFilter === 'all' 
-                    ? 'bg-primary-red-light border border-primary-red' 
-                    : 'hover:bg-slate-50'
-                }`}
-              >
-                <div className="w-10 h-10 bg-slate-100 rounded-full flex items-center justify-center">
-                  <svg className="w-5 h-5 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
-                  </svg>
-                </div>
-                <div className="text-left">
-                  <div className="font-semibold text-slate-900">All Users</div>
-                  <div className="text-sm text-slate-500">{jobs.length} jobs</div>
-                </div>
-              </button>
-
-              {/* Individual User Buttons */}
-              {users.map((u) => {
-                const userJobs = jobs.filter(job => job.user_id === u.id)
-                return (
-                  <button
-                    key={u.id}
-                    onClick={() => setUserFilter(u.id)}
-                    className={`w-full flex items-center gap-3 p-3 rounded-lg mb-2 transition ${
-                      userFilter === u.id 
-                        ? 'bg-primary-red-light border border-primary-red' 
-                        : 'hover:bg-slate-50'
-                    }`}
-                  >
-                    {u.avatar_url ? (
-                      <Image
-                        src={u.avatar_url}
-                        alt={u.full_name || 'User'}
-                        width={40}
-                        height={40}
-                        className="w-10 h-10 rounded-full object-cover"
-                      />
-                    ) : (
-                      <div className="w-10 h-10 bg-primary-red-light rounded-full flex items-center justify-center">
-                        <svg className="w-5 h-5 text-primary-red" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-                        </svg>
-                      </div>
-                    )}
-                    <div className="text-left">
-                      <div className="font-semibold text-slate-900">{u.full_name || 'Unnamed User'}</div>
-                      <div className="text-sm text-slate-500">{userJobs.length} jobs</div>
-                    </div>
-                  </button>
-                )
-              })}
-            </div>
+            <SuperAdminSidebar className="hidden lg:block fixed left-0 top-20 h-full w-64" />
           )}
 
           {/* Main Content Area */}
-          <div className="flex-1">
-            {/* Mobile User Filter Dropdown */}
-            {isSuperUser && (
-              <div className="lg:hidden mb-6">
-                <div className="relative" ref={dropdownRef}>
-                  <button
-                    onClick={() => setShowUserDropdown(!showUserDropdown)}
-                    className="w-full flex items-center justify-between p-4 bg-white border border-slate-200 rounded-lg shadow-sm hover:bg-slate-50 transition"
-                  >
-                    <div className="flex items-center gap-3">
-                      {userFilter === 'all' ? (
-                        <>
-                          <div className="w-8 h-8 bg-slate-100 rounded-full flex items-center justify-center">
-                            <svg className="w-4 h-4 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
-                            </svg>
-                          </div>
-                          <div className="text-left">
-                            <div className="font-semibold text-slate-900">All Users</div>
-                            <div className="text-sm text-slate-500">{jobs.length} jobs</div>
-                          </div>
-                        </>
-                      ) : (
-                        (() => {
-                          const selectedUser = users.find(u => u.id === userFilter)
-                          const userJobs = jobs.filter(job => job.user_id === userFilter)
-                          return (
-                            <>
-                              {selectedUser?.avatar_url ? (
-                                <Image
-                                  src={selectedUser.avatar_url}
-                                  alt={selectedUser.full_name || 'User'}
-                                  width={32}
-                                  height={32}
-                                  className="w-8 h-8 rounded-full object-cover"
-                                />
-                              ) : (
-                                <div className="w-8 h-8 bg-primary-red-light rounded-full flex items-center justify-center">
-                                  <svg className="w-4 h-4 text-primary-red" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-                                  </svg>
-                                </div>
-                              )}
-                              <div className="text-left">
-                                <div className="font-semibold text-slate-900">{selectedUser?.full_name || 'Unnamed User'}</div>
-                                <div className="text-sm text-slate-500">{userJobs.length} jobs</div>
-                              </div>
-                            </>
-                          )
-                        })()
-                      )}
-                    </div>
-                    <svg 
-                      className={`w-5 h-5 text-slate-400 transition-transform ${showUserDropdown ? 'rotate-180' : ''}`}
-                      fill="none" 
-                      stroke="currentColor" 
-                      viewBox="0 0 24 24"
-                    >
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                    </svg>
-                  </button>
-
-                  {/* Dropdown Menu */}
-                  {showUserDropdown && (
-                    <div className="absolute top-full left-0 right-0 mt-2 bg-white border border-slate-200 rounded-lg shadow-lg z-50 max-h-64 overflow-y-auto">
-                      {/* All Users Option */}
-                      <button
-                        onClick={() => {
-                          setUserFilter('all')
-                          setShowUserDropdown(false)
-                        }}
-                        className={`w-full flex items-center gap-3 p-4 hover:bg-slate-50 transition ${
-                          userFilter === 'all' ? 'bg-primary-red-light' : ''
-                        }`}
-                      >
-                        <div className="w-8 h-8 bg-slate-100 rounded-full flex items-center justify-center">
-                          <svg className="w-4 h-4 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
-                          </svg>
-                        </div>
-                        <div className="text-left">
-                          <div className="font-semibold text-slate-900">All Users</div>
-                          <div className="text-sm text-slate-500">{jobs.length} jobs</div>
-                        </div>
-                      </button>
-
-                      {/* Individual User Options */}
-                      {users.map((u) => {
-                        const userJobs = jobs.filter(job => job.user_id === u.id)
-                        return (
-                          <button
-                            key={u.id}
-                            onClick={() => {
-                              setUserFilter(u.id)
-                              setShowUserDropdown(false)
-                            }}
-                            className={`w-full flex items-center gap-3 p-4 hover:bg-slate-50 transition ${
-                              userFilter === u.id ? 'bg-primary-red-light' : ''
-                            }`}
-                          >
-                            {u.avatar_url ? (
-                              <Image
-                                src={u.avatar_url}
-                                alt={u.full_name || 'User'}
-                                width={32}
-                                height={32}
-                                className="w-8 h-8 rounded-full object-cover"
-                              />
-                            ) : (
-                              <div className="w-8 h-8 bg-primary-red-light rounded-full flex items-center justify-center">
-                                <svg className="w-4 h-4 text-primary-red" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-                                </svg>
-                              </div>
-                            )}
-                            <div className="text-left">
-                              <div className="font-semibold text-slate-900">{u.full_name || 'Unnamed User'}</div>
-                              <div className="text-sm text-slate-500">{userJobs.length} jobs</div>
-                            </div>
-                          </button>
-                        )
-                      })}
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
+          <div className={`flex-1 ${isSuperUser ? 'lg:ml-64' : ''}`}>
 
             <div className="flex items-center justify-between mb-6">
               <div>
@@ -449,20 +331,53 @@ export default function JobsPage() {
                   {filteredJobs.length} of {jobs.length} total jobs
                   {userFilter !== 'all' && users.find(u => u.id === userFilter) && (
                     <span className="ml-2 text-primary-red">
-                      (filtered by {users.find(u => u.id === userFilter)?.full_name || 'User'})
+                      (filtered by {users.find(u => u.id === userFilter)?.name || 'User'})
                     </span>
                   )}
                 </p>
               </div>
-              <button
-                onClick={() => setShowForm(!showForm)}
-                className="px-4 py-2 bg-primary-red text-white rounded-lg font-medium hover:bg-primary-red-dark transition flex items-center space-x-2"
-              >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                </svg>
-                <span>Add Job</span>
-              </button>
+              
+              {/* User Filter Dropdown and Add Job Button - Only for Super Users */}
+              {isSuperUser && (
+                <div className="flex items-center gap-4">
+                  {users.length > 0 && (
+                    <div className="relative">
+                      <select
+                        value={userFilter}
+                        onChange={(e) => setUserFilter(e.target.value)}
+                        className="appearance-none bg-white border border-slate-300 rounded-lg px-4 py-2 pr-8 text-sm focus:outline-none focus:ring-2 focus:ring-primary-red focus:border-transparent"
+                      >
+                        <option value="all">All Users ({jobs.length} jobs)</option>
+                        {users.map((user) => {
+                          const userJobs = jobs.filter(job => 
+                            job.assignedUsers && job.assignedUsers.some(assignedUser => assignedUser.id === user.id)
+                          )
+                          return (
+                            <option key={user.id} value={user.id}>
+                              {user.name || 'Unnamed User'} ({userJobs.length} jobs)
+                            </option>
+                          )
+                        })}
+                      </select>
+                      <div className="absolute inset-y-0 right-0 flex items-center px-2 pointer-events-none">
+                        <svg className="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                        </svg>
+                      </div>
+                    </div>
+                  )}
+                  
+                  <button
+                    onClick={() => setShowForm(!showForm)}
+                    className="px-4 py-2 bg-primary-red text-white rounded-lg font-medium hover:bg-primary-red-dark transition flex items-center space-x-2"
+                  >
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                    </svg>
+                    <span>Add Job</span>
+                  </button>
+                </div>
+              )}
             </div>
 
         {/* Add Job Form */}
@@ -510,20 +425,51 @@ export default function JobsPage() {
               {isSuperUser && (
                 <div>
                   <label className="block text-sm font-normal text-slate-700 mb-2">
-                    Assign to User
+                    Assign to Users
                   </label>
-                  <select
-                    value={selectedUserId}
-                    onChange={(e) => setSelectedUserId(e.target.value)}
-                    className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-red focus:border-transparent"
-                  >
-                    <option value="">Select a user...</option>
+                  <div className="max-h-48 overflow-y-auto border border-slate-300 rounded-lg p-3">
                     {users.map((u) => (
-                      <option key={u.id} value={u.id}>
-                        {u.full_name || u.email || 'Unnamed User'}
-                      </option>
+                      <label key={u.id} className="flex items-center space-x-3 py-2 hover:bg-slate-50 rounded px-2">
+                        <input
+                          type="checkbox"
+                          checked={selectedUserIds.includes(u.id)}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setSelectedUserIds([...selectedUserIds, u.id])
+                            } else {
+                              setSelectedUserIds(selectedUserIds.filter(id => id !== u.id))
+                            }
+                          }}
+                          className="w-4 h-4 text-primary-red border-slate-300 rounded focus:ring-primary-red"
+                        />
+                        <div className="flex items-center space-x-3">
+                          {u.avatar_url ? (
+                            <Image
+                              src={u.avatar_url}
+                              alt={u.name || 'User'}
+                              width={32}
+                              height={32}
+                              className="w-8 h-8 rounded-full object-cover"
+                            />
+                          ) : (
+                            <div className="w-8 h-8 bg-primary-red-light rounded-full flex items-center justify-center">
+                              <svg className="w-4 h-4 text-primary-red" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                              </svg>
+                            </div>
+                          )}
+                          <span className="text-sm font-medium text-slate-900">
+                            {u.full_name || u.email || 'Unnamed User'}
+                          </span>
+                        </div>
+                      </label>
                     ))}
-                  </select>
+                  </div>
+                  {selectedUserIds.length > 0 && (
+                    <p className="text-xs text-slate-500 mt-2">
+                      {selectedUserIds.length} user{selectedUserIds.length !== 1 ? 's' : ''} selected
+                    </p>
+                  )}
                 </div>
               )}
               <div className="flex space-x-3">
@@ -550,28 +496,54 @@ export default function JobsPage() {
           {filteredJobs.map((job) => (
             <div key={job.id} className="relative group">
               <Link href={`/jobs/${job.id}`}>
-                <div className="bg-white rounded-xl border border-slate-200 p-6 hover:shadow-md transition cursor-pointer">
+                <div className="bg-white rounded-xl border border-slate-200 p-6 hover:shadow-md transition cursor-pointer relative">
                   <div className="flex items-start space-x-4">
-                    {isSuperUser && job.profiles?.avatar_url ? (
-                      <Image
-                        src={job.profiles.avatar_url}
-                        alt="Job owner avatar"
-                        width={48}
-                        height={48}
-                        className="w-12 h-12 rounded-full object-cover shrink-0"
-                      />
-                    ) : (
-                      <div className="w-12 h-12 bg-primary-red-light rounded-lg flex items-center justify-center shrink-0">
-                        <svg className="w-6 h-6 text-primary-red" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                        </svg>
-                      </div>
-                    )}
+                    {/* Assigned Users Avatars or Default Icon */}
+                    <div className="w-12 h-12 shrink-0">
+                      {job.assignedUsers && job.assignedUsers.length > 0 ? (
+                        <div className="flex -space-x-1">
+                          {job.assignedUsers.slice(0, 3).map((assignedUser) => (
+                            <div key={assignedUser.id} className="relative">
+                              {assignedUser.avatar_url ? (
+                                <Image
+                                  src={assignedUser.avatar_url}
+                                  alt={assignedUser.full_name || 'User'}
+                                  width={32}
+                                  height={32}
+                                  className="w-8 h-8 rounded-full border-2 border-white object-cover"
+                                />
+                              ) : (
+                                <div className="w-8 h-8 bg-primary-red-light rounded-full border-2 border-white flex items-center justify-center">
+                                  <svg className="w-4 h-4 text-primary-red" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                                  </svg>
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                          {job.assignedUsers.length > 3 && (
+                            <div className="w-8 h-8 bg-slate-200 rounded-full border-2 border-white flex items-center justify-center">
+                              <span className="text-xs font-medium text-slate-600">+{job.assignedUsers.length - 3}</span>
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="w-12 h-12 bg-primary-red-light rounded-lg flex items-center justify-center">
+                          <svg className="w-6 h-6 text-primary-red" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                          </svg>
+                        </div>
+                      )}
+                    </div>
                     <div className="flex-1 min-w-0">
                       <h3 className="text-lg font-semibold text-slate-900 truncate">{job.job_name}</h3>
-                      {isSuperUser && job.profiles?.full_name && (
-                        <p className="text-slate-500 text-xs mt-1">Assigned to: {job.profiles.full_name}</p>
-                      )}
+                      <div className="mt-1">
+                        {job.assignedUsers && job.assignedUsers.length > 0 ? (
+                          <p className="text-slate-500 text-xs">Assigned to {job.assignedUsers.length} user{job.assignedUsers.length !== 1 ? 's' : ''}</p>
+                        ) : (
+                          <p className="text-slate-500 text-xs">Created by: {job.profiles?.full_name || 'Unknown'}</p>
+                        )}
+                      </div>
                       {job.address && (
                         <p className="text-slate-600 text-sm mt-1 truncate">{job.address}</p>
                       )}
@@ -585,20 +557,22 @@ export default function JobsPage() {
                   </div>
                 </div>
               </Link>
-              <button
-                onClick={(e) => handleDeleteJob(job.id, e)}
-                className="absolute top-2 right-2 w-8 h-8 bg-primary-red text-white rounded-lg opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center hover:bg-primary-red-dark"
-                title="Delete job"
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                </svg>
-              </button>
+              {isSuperUser && (
+                <button
+                  onClick={(e) => handleDeleteJob(job.id, e)}
+                  className="absolute top-2 right-2 w-8 h-8 bg-primary-red text-white rounded-lg opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center hover:bg-primary-red-dark"
+                  title="Delete job"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                  </svg>
+                </button>
+              )}
             </div>
           ))}
         </div>
 
-        {filteredJobs.length === 0 && !showForm && (
+        {filteredJobs.length === 0 && !showForm && isSuperUser && (
           <div className="text-center py-12">
             <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-4">
               <svg className="w-8 h-8 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -613,6 +587,18 @@ export default function JobsPage() {
             >
               Add Your First Job
             </button>
+          </div>
+        )}
+
+        {filteredJobs.length === 0 && !showForm && !isSuperUser && (
+          <div className="text-center py-12">
+            <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-4">
+              <svg className="w-8 h-8 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+              </svg>
+            </div>
+            <h3 className="text-lg font-semibold text-slate-900 mb-2">No jobs available</h3>
+            <p className="text-slate-600 mb-4">Contact your administrator to create jobs</p>
           </div>
         )}
           </div>

@@ -4,17 +4,281 @@ import { createClient } from '@/lib/supabase/client'
 import { useRouter, useParams } from 'next/navigation'
 import { useEffect, useState, useCallback, useRef } from 'react'
 import type { User } from '@supabase/supabase-js'
+
 import Link from 'next/link'
 import Image from 'next/image'
+import Map, { Marker } from 'react-map-gl/mapbox'
+import 'mapbox-gl/dist/mapbox-gl.css'
 
 // Force dynamic rendering to avoid static generation issues
 export const dynamic = 'force-dynamic'
+
+type NoteWithoutProfiles = {
+  id: string
+  user_id: string
+  content: string
+  created_at: string
+}
+
+type Note = NoteWithoutProfiles & {
+  profiles?: { full_name?: string | null; avatar_url?: string | null }
+}
+
+type Profile = {
+  id: string
+  full_name: string | null
+  avatar_url: string | null
+  is_super_user?: boolean
+}
+
+function JobNotesSection({ jobId, user, jobOwnerId }: { jobId: string, user: User | null, jobOwnerId?: string }) {
+  const supabase = createClient()
+  const [notes, setNotes] = useState<Note[]>([])
+  const [noteContent, setNoteContent] = useState('')
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editingContent, setEditingContent] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [isSuperUser, setIsSuperUser] = useState(false)
+  const [userRoles, setUserRoles] = useState<string[]>([])
+  const [profile, setProfile] = useState<{ full_name: string | null; avatar_url: string | null } | null>(null)
+
+  // Fetch notes for this job
+  const fetchNotes = useCallback(async () => {
+    setLoading(true)
+    const { data, error } = await supabase
+      .from('notes')
+      .select('id, user_id, content, created_at')
+      .eq('job_id', parseInt(jobId as string))
+      .is('photo_id', null)
+      .order('created_at', { ascending: false })
+    if (!error && data) {
+      // Fetch profile data separately for each note
+      const notesWithProfiles = await Promise.all(
+        data.map(async (note: NoteWithoutProfiles) => {
+          const { data: profile } = await supabase
+            .from('profiles')
+            .select('full_name, avatar_url')
+            .eq('id', note.user_id)
+            .maybeSingle()
+          return {
+            ...note,
+            profiles: profile
+          }
+        })
+      )
+      setNotes(notesWithProfiles)
+    }
+    setLoading(false)
+  }, [supabase, jobId])
+
+  useEffect(() => {
+    fetchNotes()
+  }, [fetchNotes])
+
+  // Fetch user profile and roles
+  useEffect(() => {
+    if (!user) return
+    const fetchProfileAndRoles = async () => {
+      // Get profile
+      const { data: profileData } = await supabase
+        .from('profiles')
+        .select('full_name, avatar_url')
+        .eq('id', user.id)
+        .maybeSingle()
+      setProfile(profileData)
+
+      // Get user roles
+      const { data: userRolesData } = await supabase
+        .from('user_roles')
+        .select('roles(name)')
+        .eq('user_id', user.id)
+      
+      const roles = (userRolesData as unknown as { roles: { name: string } }[])?.map(ur => ur.roles?.name).filter(Boolean) || []
+      setUserRoles(roles)
+      setIsSuperUser(roles.includes('super_admin'))
+
+      // Get project-specific roles for this job
+      // Note: Project-specific roles have been simplified to use only global roles
+    }
+    fetchProfileAndRoles()
+  }, [user, supabase, jobId])
+
+  // Add note
+  const handleAddNote = async () => {
+    if (!noteContent.trim() || !user) return
+    setLoading(true)
+    try {
+      const { data, error } = await supabase.from('notes').insert({
+        job_id: parseInt(jobId as string),
+        user_id: user.id,
+        content: noteContent,
+        photo_id: null
+      })
+      
+      if (error) {
+        console.error('Error adding comment:', error)
+        alert(`Failed to add comment: ${error.message}`)
+      } else {
+        console.log('Comment added successfully:', data)
+        setNoteContent('')
+        await fetchNotes()
+      }
+    } catch (error) {
+      console.error('Unexpected error adding comment:', error)
+      alert('An unexpected error occurred while adding the comment')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // Edit note
+  const handleEditNote = async (id: string) => {
+    if (!editingContent.trim()) return
+    setLoading(true)
+    try {
+      const { data, error } = await supabase.from('notes').update({ content: editingContent }).eq('id', id)
+      
+      if (error) {
+        console.error('Error editing comment:', error)
+        alert(`Failed to edit comment: ${error.message}`)
+      } else {
+        console.log('Comment edited successfully:', data)
+        setEditingId(null)
+        setEditingContent('')
+        await fetchNotes()
+      }
+    } catch (error) {
+      console.error('Unexpected error editing comment:', error)
+      alert('An unexpected error occurred while editing the comment')
+    } finally {
+      setLoading(false)
+    }
+  }  // Format time ago
+  function formatTimeAgo(dateString: string) {
+    const now = new Date()
+    const date = new Date(dateString)
+    const diffMs = now.getTime() - date.getTime()
+    const diffMins = Math.floor(diffMs / 60000)
+    if (diffMins < 1) return 'just now'
+    if (diffMins < 60) return `${diffMins} minute${diffMins === 1 ? '' : 's'} ago`
+    const diffHours = Math.floor(diffMins / 60)
+    if (diffHours < 24) return `${diffHours} hour${diffHours === 1 ? '' : 's'} ago`
+    const diffDays = Math.floor(diffHours / 24)
+    return `${diffDays} day${diffDays === 1 ? '' : 's'} ago`
+  }
+
+  // Check if user can comment (job owner, super admin, brand ambassador, or assigned users)
+  const canComment = isSuperUser || 
+    (user && jobOwnerId && user.id === jobOwnerId) || 
+    userRoles.includes('brand_ambassador') ||
+    userRoles.some(role => ['rep', 'measure_tech', 'installer'].includes(role))
+
+  return (
+    <div>
+      <div className="space-y-5 mb-4">
+        {notes.length > 0 ? (
+          notes.map(note => (
+            <div key={note.id} className="flex items-start gap-3">
+              {note.profiles?.avatar_url ? (
+                <Image src={note.profiles.avatar_url} alt="avatar" width={40} height={40} className="rounded-full w-10 h-10 object-cover" />
+              ) : (
+                <div className="w-10 h-10 bg-primary-red rounded-full flex items-center justify-center">
+                  <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                  </svg>
+                </div>
+              )}
+              <div className="flex-1">
+                <div className="font-bold text-slate-900 leading-tight">{note.profiles?.full_name || 'User'}</div>
+                {editingId === note.id ? (
+                  <div className="flex gap-2 mt-1">
+                    <input
+                      type="text"
+                      value={editingContent}
+                      onChange={e => setEditingContent(e.target.value)}
+                      className="flex-1 border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-red"
+                    />
+                    <button
+                      className="px-3 py-2 bg-primary-red text-white rounded-lg font-semibold text-sm hover:bg-primary-red-dark transition"
+                      onClick={() => handleEditNote(note.id)}
+                      disabled={loading || !editingContent.trim()}
+                    >Save</button>
+                    <button
+                      className="px-3 py-2 bg-slate-200 text-slate-700 rounded-lg font-semibold text-sm hover:bg-slate-300 transition"
+                      onClick={() => { setEditingId(null); setEditingContent('') }}
+                    >Cancel</button>
+                  </div>
+                ) : (
+                  <div className="text-slate-800 mb-1 whitespace-pre-line">{note.content}</div>
+                )}
+                <div className="text-xs text-slate-500">{formatTimeAgo(note.created_at)}</div>
+              </div>
+              {(isSuperUser || note.user_id === user?.id) && editingId !== note.id && (
+                <button
+                  className="ml-2 text-slate-400 hover:text-primary-red"
+                  title="Edit note"
+                  onClick={() => { setEditingId(note.id); setEditingContent(note.content) }}
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                  </svg>
+                </button>
+              )}
+            </div>
+          ))
+        ) : (
+          <div className="text-slate-500 text-sm">No comments yet.</div>
+        )}
+      </div>
+      
+      {/* Comment form - only show for authorized users */}
+      {canComment ? (
+        <form className="flex items-center gap-3 pt-2 border-t border-slate-100" onSubmit={e => { e.preventDefault(); handleAddNote() }}>
+          {profile?.avatar_url ? (
+            <Image src={profile.avatar_url} alt="avatar" width={40} height={40} className="rounded-full w-10 h-10 object-cover" />
+          ) : (
+            <div className="w-10 h-10 bg-primary-red rounded-full flex items-center justify-center">
+              <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+              </svg>
+            </div>
+          )}
+          <input
+            type="text"
+            className="flex-1 border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-red"
+            placeholder="Add a comment"
+            value={noteContent}
+            onChange={e => setNoteContent(e.target.value)}
+            disabled={loading}
+          />
+          <button
+            type="submit"
+            className="px-4 py-2 bg-primary-red text-white rounded-lg font-semibold text-sm hover:bg-primary-red-dark transition disabled:opacity-50"
+            disabled={loading || !noteContent.trim()}
+          >Post</button>
+        </form>
+      ) : (
+        <div className="pt-4 border-t border-slate-100">
+          <div className="text-center py-4">
+            <div className="w-8 h-8 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-2">
+              <svg className="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+              </svg>
+            </div>
+            <p className="text-sm text-slate-500">Only super users and the job owner can add comments</p>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
 
 type Job = {
   id: number
   job_name: string
   installation_info: string
   address: string
+  user_id?: string
 }
 
 type JobPhoto = {
@@ -42,19 +306,48 @@ export default function JobDetailPage() {
   // Edit mode states
   const [editingJobName, setEditingJobName] = useState(false)
   const [editingAddress, setEditingAddress] = useState(false)
-  const [editingNotes, setEditingNotes] = useState(false)
+  const [editingAssignments, setEditingAssignments] = useState(false)
   const [editJobName, setEditJobName] = useState('')
   const [editAddress, setEditAddress] = useState('')
-  const [editNotes, setEditNotes] = useState('')
+  const [editAssignedUserIds, setEditAssignedUserIds] = useState<string[]>([])
   const [saving, setSaving] = useState(false)
   const [selectedPhoto, setSelectedPhoto] = useState<JobPhoto | null>(null)
   const [showPhotoModal, setShowPhotoModal] = useState(false)
+  const [users, setUsers] = useState<{ id: string; full_name: string | null; email: string }[]>([])
+  const [assignedUsers, setAssignedUsers] = useState<{ id: string; full_name: string | null; avatar_url: string | null; role: string }[]>([])
+  const [showAccountDropdown, setShowAccountDropdown] = useState(false)
+  const [userRoles, setUserRoles] = useState<{ name: string }[]>([])
+  const [coordinates, setCoordinates] = useState<{ latitude: number; longitude: number } | null>(null)
+  const [geocodingLoading, setGeocodingLoading] = useState(false)
   
   const router = useRouter()
   const params = useParams()
   const supabase = createClient()
   const jobId = params.id
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const dropdownRef = useRef<HTMLDivElement>(null)
+
+  // Geocode address to coordinates
+  const geocodeAddress = async (address: string) => {
+    if (!address || !process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN) return
+    
+    setGeocodingLoading(true)
+    try {
+      const response = await fetch(
+        `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(address)}.json?access_token=${process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN}&limit=1`
+      )
+      const data = await response.json()
+      
+      if (data.features && data.features.length > 0) {
+        const [longitude, latitude] = data.features[0].center
+        setCoordinates({ latitude, longitude })
+      }
+    } catch (error) {
+      console.error('Geocoding error:', error)
+    } finally {
+      setGeocodingLoading(false)
+    }
+  }
 
   const filteredPhotos = filterType === 'all' 
     ? photos 
@@ -65,12 +358,16 @@ export default function JobDetailPage() {
     const { data, error } = await supabase
       .from('jobs')
       .select('*')
-      .eq('id', jobId)
+      .eq('id', parseInt(jobId as string))
       .single()
     if (error) {
       console.error(error)
     } else {
       setJob(data)
+      // Geocode the address if available
+      if (data.address) {
+        geocodeAddress(data.address)
+      }
     }
   }, [supabase, jobId])
 
@@ -79,7 +376,7 @@ export default function JobDetailPage() {
     const { data, error } = await supabase
       .from('job_photos')
       .select('*')
-      .eq('job_id', jobId)
+      .eq('job_id', parseInt(jobId as string))
     if (error) {
       console.error('Error fetching photos:', error)
     } else {
@@ -98,20 +395,106 @@ export default function JobDetailPage() {
         fetchJob()
         fetchPhotos()
         
-        // Get profile data
+        // Get profile data and check if super user
         const { data: profileData } = await supabase
           .from('profiles')
-          .select('full_name, avatar_url')
+          .select('full_name, avatar_url, is_super_user')
           .eq('id', data.user.id)
           .maybeSingle()
         
         if (profileData) {
           setProfile(profileData)
+          
+          // Get user roles
+          const { data: userRolesData } = await supabase
+            .from('user_roles')
+            .select('roles(name)')
+            .eq('user_id', data.user.id)
+          
+          const roles = (userRolesData as unknown as { roles: { name: string } }[])?.map(ur => ur.roles).filter(Boolean) || []
+          setUserRoles(roles)
+
+          // Get project-specific roles for this job
+          // Note: Project-specific roles have been simplified to use only global roles
+
+          // If super user or has appropriate roles, fetch all users for assignment
+          if (profileData.is_super_user || roles.some(role => role.name === 'super_admin')) {
+            const { data: usersData } = await supabase
+              .from('profiles')
+              .select('id, full_name')
+              .order('full_name')
+            if (usersData) {
+              setUsers(usersData.map((profile: Profile) => ({
+                id: profile.id,
+                full_name: profile.full_name,
+                email: '' // Email not accessible client-side
+              })))
+            }
+          }
         }
       }
     }
     checkUser()
-  }, [router, supabase, fetchJob, fetchPhotos])
+  }, [router, supabase, fetchJob, fetchPhotos, jobId])
+
+  // Fetch assigned users with their roles
+  useEffect(() => {
+    if (jobId && userRoles.some(role => role.name === 'super_admin')) {
+      const fetchAssignedUsers = async () => {
+        const { data } = await supabase
+          .from('job_assignments')
+          .select('user_id')
+          .eq('job_id', parseInt(jobId as string))
+        
+        if (data) {
+          // Fetch profiles and roles for each assigned user
+          const assignedUsersData = await Promise.all(
+            data.map(async (assignment: { user_id: string }) => {
+              const { data: profile } = await supabase
+                .from('profiles')
+                .select('full_name, avatar_url')
+                .eq('id', assignment.user_id)
+                .maybeSingle()
+              
+              // Get user roles
+              const { data: userRolesData } = await supabase
+                .from('user_roles')
+                .select('roles(name)')
+                .eq('user_id', assignment.user_id)
+              
+              const roles = (userRolesData as unknown as { roles: { name: string } }[])?.map(ur => ur.roles?.name).filter(Boolean) || []
+              
+              return {
+                id: assignment.user_id,
+                full_name: profile?.full_name || null,
+                avatar_url: profile?.avatar_url || null,
+                role: roles.length > 0 ? roles[0] : 'user' // Take first role for display
+              }
+            })
+          )
+          setAssignedUsers(assignedUsersData)
+        }
+      }
+      fetchAssignedUsers()
+    }
+  }, [jobId, userRoles, supabase])
+
+  // Handle click outside dropdown to close it
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setShowAccountDropdown(false)
+      }
+    }
+
+    if (showAccountDropdown) {
+      document.addEventListener('mousedown', handleClickOutside)
+    }
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside)
+    }
+  }, [showAccountDropdown])
 
   const handlePhotoUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     if (!event.target.files || event.target.files.length === 0 || !user || !job) {
@@ -195,25 +578,24 @@ export default function JobDetailPage() {
     // Add optimistic photo immediately for instant feedback
     setPhotos(prev => [tempPhoto, ...prev])
     
-    // Get geolocation - skip on mobile for faster uploads
+    // Get geolocation - optimized for both mobile and desktop
     const getLocation = async () => {
       const isMobile = window.innerWidth < 768
       
-      // Skip geolocation on mobile to speed up uploads
-      if (isMobile || !navigator.geolocation) return {}
+      // Skip geolocation if not available
+      if (!navigator.geolocation) return {}
       
       try {
         const position = await new Promise<GeolocationPosition>((resolve, reject) => {
           navigator.geolocation.getCurrentPosition(resolve, reject, {
-            enableHighAccuracy: false, // Use low accuracy for speed
-            timeout: 2000, // Very short timeout
+            enableHighAccuracy: !isMobile, // Use high accuracy on desktop, low on mobile
+            timeout: isMobile ? 3000 : 2000, // Shorter timeout on mobile
             maximumAge: 300000 // Allow 5min old location
           })
         })
         return {
           latitude: position.coords.latitude,
-          longitude: position.coords.longitude,
-          accuracy: position.coords.accuracy
+          longitude: position.coords.longitude
         }
       } catch (error) {
         console.log('Location not available:', error)
@@ -227,7 +609,7 @@ export default function JobDetailPage() {
       // On mobile, process image synchronously to avoid memory issues
       if (isMobile) {
         const resizedBlob = await resizeImage(file)
-        const location = {} // Skip location on mobile for speed
+        const location = await getLocation() // Enable location on mobile too
         
         // Convert blob to File if needed
         const finalFile = resizedBlob instanceof Blob && !(resizedBlob instanceof File)
@@ -321,7 +703,7 @@ export default function JobDetailPage() {
     const { error } = await supabase
       .from('jobs')
       .update({ [field]: value })
-      .eq('id', jobId)
+      .eq('id', parseInt(jobId as string))
 
     if (error) {
       console.error('Error updating job:', error)
@@ -330,6 +712,40 @@ export default function JobDetailPage() {
       // Update local job state
       setJob({ ...job, [field]: value })
       
+      // If updating address, geocode it
+      if (field === 'address' && value) {
+        geocodeAddress(value)
+      }
+      
+      // If updating assignment, refresh the assigned users
+      if (field === 'assignments') {
+        // Refresh assigned users after update
+        const { data } = await supabase
+          .from('job_assignments')
+          .select('user_id')
+          .eq('job_id', parseInt(jobId as string))
+        
+        if (data) {
+          // Fetch profiles for each assigned user
+          const assignedUsersData = await Promise.all(
+            data.map(async (assignment: { user_id: string }) => {
+              const { data: profile } = await supabase
+                .from('profiles')
+                .select('full_name, avatar_url')
+                .eq('id', assignment.user_id)
+                .maybeSingle()
+              
+              return {
+                id: assignment.user_id,
+                full_name: profile?.full_name || null,
+                avatar_url: profile?.avatar_url || null
+              }
+            })
+          )
+          setAssignedUsers(assignedUsersData)
+        }
+      }
+      
       // Reset edit states
       if (field === 'job_name') {
         setEditingJobName(false)
@@ -337,9 +753,9 @@ export default function JobDetailPage() {
       } else if (field === 'address') {
         setEditingAddress(false)
         setEditAddress('')
-      } else if (field === 'installation_info') {
-        setEditingNotes(false)
-        setEditNotes('')
+      } else if (field === 'assignments') {
+        setEditingAssignments(false)
+        setEditAssignedUserIds([])
       }
     }
     setSaving(false)
@@ -355,9 +771,9 @@ export default function JobDetailPage() {
     setEditingAddress(true)
   }
 
-  const startEditNotes = () => {
-    setEditNotes(job?.installation_info || '')
-    setEditingNotes(true)
+  const startEditAssignment = () => {
+    setEditAssignedUserIds(assignedUsers.map(user => user.id))
+    setEditingAssignments(true)
   }
 
   const cancelEdit = (type: string) => {
@@ -367,9 +783,9 @@ export default function JobDetailPage() {
     } else if (type === 'address') {
       setEditingAddress(false)
       setEditAddress('')
-    } else if (type === 'notes') {
-      setEditingNotes(false)
-      setEditNotes('')
+    } else if (type === 'assignment') {
+      setEditingAssignments(false)
+      setEditAssignedUserIds([])
     }
   }
 
@@ -386,7 +802,7 @@ export default function JobDetailPage() {
     const { error } = await supabase
       .from('jobs')
       .delete()
-      .eq('id', jobId)
+      .eq('id', parseInt(jobId as string))
 
     if (error) {
       console.error(error)
@@ -422,7 +838,7 @@ export default function JobDetailPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-white to-blue-50">
+    <div className="min-h-screen bg-linear-to-br from-light-gray via-white to-light-gray">
       {/* Header */}
       <header className="bg-white border-b border-slate-200 shadow-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
@@ -449,25 +865,51 @@ export default function JobDetailPage() {
                       unoptimized
                     />
                   ) : (
-                    <div className="w-7 h-7 bg-red-100 rounded-full flex items-center justify-center">
-                      <svg className="w-4 h-4 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <div className="w-7 h-7 bg-primary-red-light rounded-full flex items-center justify-center">
+                      <svg className="w-4 h-4 text-primary-red" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
                       </svg>
                     </div>
                   )}
                   <span className="text-sm font-medium text-slate-700">
-                    {profile?.full_name || user?.email?.split('@')[0] || 'Profile'}
+                    {profile?.full_name || 'Name'}
                   </span>
                 </Link>
-                <button
-                  onClick={handleDeleteJob}
-                  className="px-3 py-2 text-sm font-medium text-red-600 hover:text-red-700 hover:bg-red-50 rounded-lg transition"
-                  title="Delete Job"
-                >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                  </svg>
-                </button>
+                <div className="relative" ref={dropdownRef}>
+                  <button
+                    onClick={() => setShowAccountDropdown(!showAccountDropdown)}
+                    className="w-8 h-8 flex items-center justify-center hover:bg-slate-100 rounded-lg transition"
+                  >
+                    <svg className="w-4 h-4 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </button>
+                  {showAccountDropdown && (
+                    <div className="absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg border border-slate-200 py-1 z-50">
+                      <Link href="/profile" onClick={() => setShowAccountDropdown(false)}>
+                        <div className="px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 cursor-pointer flex items-center gap-2">
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                          </svg>
+                          Profile Settings
+                        </div>
+                      </Link>
+                      <button
+                        onClick={() => {
+                          setShowAccountDropdown(false)
+                          handleSignOut()
+                        }}
+                        className="w-full px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 cursor-pointer flex items-center gap-2"
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                        </svg>
+                        Sign Out
+                      </button>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
             {/* Bottom row with job info */}
@@ -478,7 +920,7 @@ export default function JobDetailPage() {
                     type="text"
                     value={editJobName}
                     onChange={(e) => setEditJobName(e.target.value)}
-                    className="w-full text-lg font-bold text-center border border-slate-300 rounded-lg px-3 py-1 focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent"
+                    className="w-full text-lg font-bold text-center border border-slate-300 rounded-lg px-3 py-1 focus:outline-none focus:ring-2 focus:ring-primary-red focus:border-transparent"
                     disabled={saving}
                     autoFocus
                   />
@@ -486,7 +928,7 @@ export default function JobDetailPage() {
                     <button
                       onClick={() => handleUpdateJobField('job_name', editJobName)}
                       disabled={saving || !editJobName.trim()}
-                      className="px-3 py-1 text-sm bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"
+                      className="px-3 py-1 text-sm bg-primary-red text-white rounded-lg hover:bg-primary-red-dark disabled:opacity-50"
                     >
                       {saving ? 'Saving...' : 'Save'}
                     </button>
@@ -502,29 +944,33 @@ export default function JobDetailPage() {
               ) : (
                 <div className="flex items-center justify-center gap-2">
                   <h1 className="text-lg font-bold text-slate-900">{job.job_name}</h1>
-                  <button
-                    onClick={startEditJobName}
-                    className="p-1 text-slate-400 hover:text-slate-600 transition"
-                    title="Edit job name"
-                  >
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                    </svg>
-                  </button>
+                  {(userRoles.some(role => role.name === 'super_admin')) && (
+                    <button
+                      onClick={startEditJobName}
+                      className="p-1 text-slate-400 hover:text-slate-600 transition"
+                      title="Edit job name"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                      </svg>
+                    </button>
+                  )}
                 </div>
               )}
               {job.address && !editingAddress && (
                 <div className="flex items-center justify-center gap-2 mt-1">
                   <p className="text-sm text-slate-600">{job.address}</p>
-                  <button
-                    onClick={startEditAddress}
-                    className="p-1 text-slate-400 hover:text-slate-600 transition"
-                    title="Edit address"
-                  >
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                    </svg>
-                  </button>
+                  {(userRoles.some(role => role.name === 'super_admin')) && (
+                    <button
+                      onClick={startEditAddress}
+                      className="p-1 text-slate-400 hover:text-slate-600 transition"
+                      title="Edit address"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                      </svg>
+                    </button>
+                  )}
                 </div>
               )}
               {editingAddress && (
@@ -534,14 +980,14 @@ export default function JobDetailPage() {
                     value={editAddress}
                     onChange={(e) => setEditAddress(e.target.value)}
                     placeholder="Enter address"
-                    className="w-full text-sm text-center border border-slate-300 rounded-lg px-3 py-1 focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent"
+                    className="w-full text-sm text-center border border-slate-300 rounded-lg px-3 py-1 focus:outline-none focus:ring-2 focus:ring-primary-red focus:border-transparent"
                     disabled={saving}
                   />
                   <div className="flex justify-center gap-2">
                     <button
                       onClick={() => handleUpdateJobField('address', editAddress)}
                       disabled={saving}
-                      className="px-3 py-1 text-sm bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"
+                      className="px-3 py-1 text-sm bg-primary-red text-white rounded-lg hover:bg-primary-red-dark disabled:opacity-50"
                     >
                       {saving ? 'Saving...' : 'Save'}
                     </button>
@@ -555,7 +1001,7 @@ export default function JobDetailPage() {
                   </div>
                 </div>
               )}
-              {!job.address && !editingAddress && (
+              {!job.address && !editingAddress && (userRoles.some(role => role.name === 'super_admin')) && (
                 <button
                   onClick={startEditAddress}
                   className="text-sm text-slate-400 hover:text-slate-600 transition flex items-center justify-center gap-1 mt-1"
@@ -565,6 +1011,166 @@ export default function JobDetailPage() {
                   </svg>
                   Add address
                 </button>
+              )}
+              {/* Assignment Section - Mobile */}
+              {(userRoles.some(role => role.name === 'super_admin')) && (
+                <div className="mt-2">
+                  {editingAssignments ? (
+                    <div className="space-y-2">
+                      <div className="text-sm text-slate-600 mb-2">Assign users:</div>
+                      <div className="space-y-2 max-h-40 overflow-y-auto">
+                        {users.map((user) => (
+                          <label key={user.id} className="flex items-center gap-2">
+                            <input
+                              type="checkbox"
+                              checked={editAssignedUserIds.includes(user.id)}
+                              onChange={(e) => {
+                                if (e.target.checked) {
+                                  setEditAssignedUserIds(prev => [...prev, user.id])
+                                } else {
+                                  setEditAssignedUserIds(prev => prev.filter(id => id !== user.id))
+                                }
+                              }}
+                              className="w-4 h-4 text-primary-red focus:ring-primary-red border-slate-300 rounded"
+                              disabled={saving}
+                            />
+                            <span className="text-sm text-slate-700">{user.full_name || 'Unnamed User'}</span>
+                          </label>
+                        ))}
+                      </div>
+                      <div className="flex justify-center gap-2">
+                        <button
+                          onClick={async () => {
+                            setSaving(true)
+                            try {
+                              console.log('Starting assignment update for jobId:', jobId, 'parsed:', parseInt(jobId as string))
+                              console.log('Current user roles:', userRoles)
+                              
+                              // Delete existing assignments
+                              console.log('Deleting existing assignments...')
+                              const { error: deleteError } = await supabase
+                                .from('job_assignments')
+                                .delete()
+                                .eq('job_id', parseInt(jobId as string))
+                              
+                              if (deleteError) {
+                                console.error('Delete error:', deleteError)
+                                alert(`Failed to delete existing assignments: ${deleteError.message}`)
+                                setSaving(false)
+                                return
+                              }
+                              
+                              console.log('Delete successful, inserting new assignments:', editAssignedUserIds)
+
+                              // Insert new assignments
+                              if (editAssignedUserIds.length > 0) {
+                                const assignments = editAssignedUserIds.map(userId => ({
+                                  job_id: parseInt(jobId as string),
+                                  user_id: userId,
+                                  assigned_by: user.id
+                                }))
+                                console.log('Inserting assignments:', assignments)
+                                
+                                const { error: insertError } = await supabase
+                                  .from('job_assignments')
+                                  .insert(assignments)
+                                
+                                if (insertError) {
+                                  console.error('Insert error:', insertError)
+                                  alert(`Failed to insert new assignments: ${insertError.message}`)
+                                  setSaving(false)
+                                  return
+                                }
+                                
+                                console.log('Insert successful')
+                              }
+
+                              // Refresh assigned users
+                              console.log('Refreshing assigned users...')
+                              const { data, error: fetchError } = await supabase
+                                .from('job_assignments')
+                                .select('user_id')
+                                .eq('job_id', parseInt(jobId as string))
+                              
+                              if (fetchError) {
+                                console.error('Fetch error:', fetchError)
+                                alert(`Failed to refresh assignments: ${fetchError.message}`)
+                                setSaving(false)
+                                return
+                              }
+                              
+                              console.log('Fetched data:', data)
+
+                              if (data) {
+                                // Fetch profiles and roles for each assigned user
+                                const assignedUsersData = await Promise.all(
+                                  data.map(async (assignment: { user_id: string }) => {
+                                    const { data: profile } = await supabase
+                                      .from('profiles')
+                                      .select('full_name, avatar_url')
+                                      .eq('id', assignment.user_id)
+                                      .maybeSingle()
+                                    
+                                    // Get user roles
+                                    const { data: userRolesData } = await supabase
+                                      .from('user_roles')
+                                      .select('roles(name)')
+                                      .eq('user_id', assignment.user_id)
+                                    
+                                    const roles = (userRolesData as unknown as { roles: { name: string } }[])?.map(ur => ur.roles?.name).filter(Boolean) || []
+                                    
+                                    return {
+                                      id: assignment.user_id,
+                                      full_name: profile?.full_name || null,
+                                      avatar_url: profile?.avatar_url || null,
+                                      role: roles.length > 0 ? roles[0] : 'user'
+                                    }
+                                  })
+                                )
+                                console.log('Setting assigned users:', assignedUsersData)
+                                setAssignedUsers(assignedUsersData)
+                              }
+
+                              setEditingAssignments(false)
+                              setEditAssignedUserIds([])
+                              console.log('Assignment update completed successfully')
+                            } catch (error) {
+                              console.error('Unexpected error updating assignments:', error)
+                              alert(`Failed to update assignments: ${error instanceof Error ? error.message : 'Unknown error'}`)
+                            }
+                            setSaving(false)
+                          }}
+                          disabled={saving}
+                          className="px-3 py-1 text-sm bg-primary-red text-white rounded-lg hover:bg-primary-red-dark disabled:opacity-50"
+                        >
+                          {saving ? 'Saving...' : 'Save'}
+                        </button>
+                        <button
+                          onClick={() => cancelEdit('assignment')}
+                          disabled={saving}
+                          className="px-3 py-1 text-sm bg-slate-200 text-slate-700 rounded-lg hover:bg-slate-300"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex items-center justify-center gap-2 mt-1">
+                      <span className="text-sm text-slate-600">
+                        Assigned: {assignedUsers.length > 0 ? assignedUsers.map(u => u.full_name).filter(Boolean).join(', ') : 'Unassigned'}
+                      </span>
+                      <button
+                        onClick={startEditAssignment}
+                        className="p-1 text-slate-400 hover:text-slate-600 transition"
+                        title="Change assignment"
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                        </svg>
+                      </button>
+                    </div>
+                  )}
+                </div>
               )}
             </div>
           </div>
@@ -586,7 +1192,7 @@ export default function JobDetailPage() {
                       type="text"
                       value={editJobName}
                       onChange={(e) => setEditJobName(e.target.value)}
-                      className="text-xl font-bold border border-slate-300 rounded-lg px-3 py-1 focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent"
+                      className="text-xl font-bold border border-slate-300 rounded-lg px-3 py-1 focus:outline-none focus:ring-2 focus:ring-primary-red focus:border-transparent"
                       disabled={saving}
                       autoFocus
                     />
@@ -594,7 +1200,7 @@ export default function JobDetailPage() {
                       <button
                         onClick={() => handleUpdateJobField('job_name', editJobName)}
                         disabled={saving || !editJobName.trim()}
-                        className="px-3 py-1 text-sm bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"
+                        className="px-3 py-1 text-sm bg-primary-red text-white rounded-lg hover:bg-primary-red-dark disabled:opacity-50"
                       >
                         {saving ? 'Saving...' : 'Save'}
                       </button>
@@ -610,29 +1216,33 @@ export default function JobDetailPage() {
                 ) : (
                   <div className="flex items-center gap-2">
                     <h1 className="text-xl font-bold text-slate-900">{job.job_name}</h1>
-                    <button
-                      onClick={startEditJobName}
-                      className="p-1 text-slate-400 hover:text-slate-600 transition"
-                      title="Edit job name"
-                    >
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                      </svg>
-                    </button>
+                    {(userRoles.some(role => role.name === 'super_admin')) && (
+                      <button
+                        onClick={startEditJobName}
+                        className="p-1 text-slate-400 hover:text-slate-600 transition"
+                        title="Edit job name"
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                        </svg>
+                      </button>
+                    )}
                   </div>
                 )}
                 {job.address && !editingAddress && (
                   <div className="flex items-center gap-2">
                     <p className="text-sm text-slate-600">{job.address}</p>
-                    <button
-                      onClick={startEditAddress}
-                      className="p-1 text-slate-400 hover:text-slate-600 transition"
-                      title="Edit address"
-                    >
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                      </svg>
-                    </button>
+                    {(userRoles.some(role => role.name === 'super_admin')) && (
+                      <button
+                        onClick={startEditAddress}
+                        className="p-1 text-slate-400 hover:text-slate-600 transition"
+                        title="Edit address"
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                        </svg>
+                      </button>
+                    )}
                   </div>
                 )}
                 {editingAddress && (
@@ -642,14 +1252,14 @@ export default function JobDetailPage() {
                       value={editAddress}
                       onChange={(e) => setEditAddress(e.target.value)}
                       placeholder="Enter address"
-                      className="text-sm border border-slate-300 rounded-lg px-3 py-1 focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent"
+                      className="text-sm border border-slate-300 rounded-lg px-3 py-1 focus:outline-none focus:ring-2 focus:ring-primary-red focus:border-transparent"
                       disabled={saving}
                     />
                     <div className="flex gap-2">
                       <button
                         onClick={() => handleUpdateJobField('address', editAddress)}
                         disabled={saving}
-                        className="px-3 py-1 text-sm bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"
+                        className="px-3 py-1 text-sm bg-primary-red text-white rounded-lg hover:bg-primary-red-dark disabled:opacity-50"
                       >
                         {saving ? 'Saving...' : 'Save'}
                       </button>
@@ -663,7 +1273,7 @@ export default function JobDetailPage() {
                     </div>
                   </div>
                 )}
-                {!job.address && !editingAddress && (
+                {!job.address && !editingAddress && (userRoles.some(role => role.name === 'super_admin')) && (
                   <button
                     onClick={startEditAddress}
                     className="text-sm text-slate-400 hover:text-slate-600 transition flex items-center gap-1"
@@ -673,6 +1283,166 @@ export default function JobDetailPage() {
                     </svg>
                     Add address
                   </button>
+                )}
+                {/* Assignment Section - Desktop */}
+                {(userRoles.some(role => role.name === 'super_admin')) && (
+                  <div className="mt-1">
+                    {editingAssignments ? (
+                      <div className="space-y-2">
+                        <div className="text-sm text-slate-600">Assign users:</div>
+                        <div className="space-y-2 max-h-40 overflow-y-auto">
+                          {users.map((user) => (
+                            <label key={user.id} className="flex items-center gap-2">
+                              <input
+                                type="checkbox"
+                                checked={editAssignedUserIds.includes(user.id)}
+                                onChange={(e) => {
+                                  if (e.target.checked) {
+                                    setEditAssignedUserIds(prev => [...prev, user.id])
+                                  } else {
+                                    setEditAssignedUserIds(prev => prev.filter(id => id !== user.id))
+                                  }
+                                }}
+                                className="w-4 h-4 text-primary-red focus:ring-primary-red border-slate-300 rounded"
+                                disabled={saving}
+                              />
+                              <span className="text-sm text-slate-700">{user.full_name || 'Unnamed User'}</span>
+                            </label>
+                          ))}
+                        </div>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={async () => {
+                              setSaving(true)
+                              try {
+                                console.log('Starting desktop assignment update for jobId:', jobId, 'parsed:', parseInt(jobId as string))
+                                console.log('Current user roles:', userRoles)
+                                
+                              // Delete existing assignments
+                              console.log('Deleting existing assignments...')
+                              const { error: deleteError } = await supabase
+                                .from('job_assignments')
+                                .delete()
+                                .eq('job_id', parseInt(jobId as string))
+
+                              if (deleteError) {
+                                  console.error('Delete error:', deleteError)
+                                  alert(`Failed to delete existing assignments: ${deleteError.message}`)
+                                  setSaving(false)
+                                  return
+                                }
+                                
+                                console.log('Delete successful, inserting new assignments:', editAssignedUserIds)
+
+                              // Insert new assignments
+                              if (editAssignedUserIds.length > 0) {
+                                const assignments = editAssignedUserIds.map(userId => ({
+                                  job_id: parseInt(jobId as string),
+                                  user_id: userId,
+                                  assigned_by: user.id
+                                }))
+                                console.log('Inserting assignments:', assignments)
+                                
+                                const { error: insertError } = await supabase
+                                  .from('job_assignments')
+                                  .insert(assignments)
+
+                                if (insertError) {
+                                  console.error('Insert error:', insertError)
+                                  alert(`Failed to insert new assignments: ${insertError.message}`)
+                                  setSaving(false)
+                                  return
+                                }
+                                  
+                                  console.log('Insert successful')
+                                }
+
+                                // Refresh assigned users
+                                console.log('Refreshing assigned users...')
+                                const { data, error: fetchError } = await supabase
+                                  .from('job_assignments')
+                                  .select('user_id')
+                                  .eq('job_id', parseInt(jobId as string))
+                                
+                                if (fetchError) {
+                                  console.error('Fetch error:', fetchError)
+                                  alert(`Failed to refresh assignments: ${fetchError.message}`)
+                                  setSaving(false)
+                                  return
+                                }
+                                
+                                console.log('Fetched data:', data)
+
+                                if (data) {
+                                  // Fetch profiles and roles for each assigned user
+                                  const assignedUsersData = await Promise.all(
+                                    data.map(async (assignment: { user_id: string }) => {
+                                      const { data: profile } = await supabase
+                                        .from('profiles')
+                                        .select('full_name, avatar_url')
+                                        .eq('id', assignment.user_id)
+                                        .maybeSingle()
+                                      
+                                      // Get user roles
+                                      const { data: userRolesData } = await supabase
+                                        .from('user_roles')
+                                        .select('roles(name)')
+                                        .eq('user_id', assignment.user_id)
+                                      
+                                      const roles = (userRolesData as unknown as { roles: { name: string } }[])?.map(ur => ur.roles?.name).filter(Boolean) || []
+                                      
+                                      return {
+                                        id: assignment.user_id,
+                                        full_name: profile?.full_name || null,
+                                        avatar_url: profile?.avatar_url || null,
+                                        role: roles.length > 0 ? roles[0] : 'user'
+                                      }
+                                    })
+                                  )
+                                  console.log('Setting assigned users:', assignedUsersData)
+                                  setAssignedUsers(assignedUsersData)
+                                }
+
+                                setEditingAssignments(false)
+                                setEditAssignedUserIds([])
+                                console.log('Desktop assignment update completed successfully')
+                              } catch (error) {
+                                console.error('Unexpected error updating assignments:', error)
+                                alert(`Failed to update assignments: ${error instanceof Error ? error.message : 'Unknown error'}`)
+                              }
+                              setSaving(false)
+                            }}
+                            disabled={saving}
+                            className="px-3 py-1 text-sm bg-primary-red text-white rounded-lg hover:bg-primary-red-dark disabled:opacity-50"
+                          >
+                            {saving ? 'Saving...' : 'Save'}
+                          </button>
+                          <button
+                            onClick={() => cancelEdit('assignment')}
+                            disabled={saving}
+                            className="px-3 py-1 text-sm bg-slate-200 text-slate-700 rounded-lg hover:bg-slate-300"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm text-slate-600">
+                          Assigned: {assignedUsers.length > 0 ? assignedUsers.map(u => u.full_name).filter(Boolean).join(', ') : 'Unassigned'}
+                        </span>
+                        <button
+                          onClick={startEditAssignment}
+                          className="p-1 text-slate-400 hover:text-slate-600 transition"
+                          title="Change assignment"
+                        >
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                          </svg>
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 )}
               </div>
             </div>
@@ -688,31 +1458,62 @@ export default function JobDetailPage() {
                     unoptimized
                   />
                 ) : (
-                  <div className="w-8 h-8 bg-red-100 rounded-full flex items-center justify-center">
-                    <svg className="w-5 h-5 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <div className="w-8 h-8 bg-primary-red-light rounded-full flex items-center justify-center">
+                    <svg className="w-5 h-5 text-primary-red" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
                     </svg>
                   </div>
                 )}
                 <span className="text-sm font-medium text-slate-700">
-                  {profile?.full_name || user?.email?.split('@')[0] || 'Profile'}
+                  {profile?.full_name || 'Name'}
                 </span>
               </Link>
-              <button
-                onClick={handleDeleteJob}
-                className="px-4 py-2 text-sm font-medium text-red-600 hover:text-red-700 hover:bg-red-50 rounded-lg transition flex items-center space-x-1"
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                </svg>
-                <span>Delete Job</span>
-              </button>
-              <button
-                className="px-4 py-2 text-sm font-medium text-slate-700 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition"
-                onClick={handleSignOut}
-              >
-                Sign Out
-              </button>
+              {userRoles.some(role => role.name === 'super_admin') && (
+                <button
+                  onClick={handleDeleteJob}
+                  className="px-4 py-2 text-sm font-medium text-primary-red hover:text-primary-red-dark hover:bg-primary-red-light rounded-lg transition flex items-center space-x-1"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                  </svg>
+                  <span>Delete Job</span>
+                </button>
+              )}
+              <div className="relative" ref={dropdownRef}>
+                <button
+                  onClick={() => setShowAccountDropdown(!showAccountDropdown)}
+                  className="w-10 h-10 flex items-center justify-center hover:bg-slate-100 rounded-lg transition"
+                >
+                  <svg className="w-5 h-5 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                  </svg>
+                </button>
+                {showAccountDropdown && (
+                  <div className="absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg border border-slate-200 py-1 z-50">
+                    <Link href="/profile" onClick={() => setShowAccountDropdown(false)}>
+                      <div className="px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 cursor-pointer flex items-center gap-2">
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                        </svg>
+                        Profile Settings
+                      </div>
+                    </Link>
+                    <button
+                      onClick={() => {
+                        setShowAccountDropdown(false)
+                        handleSignOut()
+                      }}
+                      className="w-full px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 cursor-pointer flex items-center gap-2"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                      </svg>
+                      Sign Out
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </div>
@@ -720,6 +1521,91 @@ export default function JobDetailPage() {
 
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {/* Assigned Users Section */}
+        <div className="bg-white rounded-xl p-6 mb-6">
+          <h3 className="text-lg font-semibold text-slate-900 mb-4">Assigned Staff</h3>
+          {assignedUsers.length > 0 ? (
+            <div className="flex -space-x-2">
+              {assignedUsers.map((assignedUser) => (
+                <div
+                  key={assignedUser.id}
+                  className="relative group"
+                >
+                  {assignedUser.avatar_url ? (
+                    <Image
+                      src={assignedUser.avatar_url}
+                      alt={assignedUser.full_name || 'User'}
+                      width={40}
+                      height={40}
+                      className="w-10 h-10 rounded-full border-2 border-white object-cover hover:scale-110 transition-transform"
+                      unoptimized
+                    />
+                  ) : (
+                    <div className="w-10 h-10 bg-primary-red-light rounded-full border-2 border-white flex items-center justify-center hover:scale-110 transition-transform">
+                      <svg className="w-5 h-5 text-primary-red" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                      </svg>
+                    </div>
+                  )}
+                  {/* Tooltip */}
+                  <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-2 py-1 bg-slate-800 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-10">
+                    {assignedUser.full_name || 'Unnamed User'}
+                    <div className="text-slate-300 capitalize">{assignedUser.role.replace('_', ' ')}</div>
+                    {/* Arrow */}
+                    <div className="absolute top-full left-1/2 transform -translate-x-1/2 w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent border-t-slate-800"></div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-slate-600">No staff assigned yet</p>
+          )}
+        </div>
+
+        {/* Location Section */}
+        {job?.address && (
+          <div className="bg-white rounded-xl p-6 mb-6">
+            <h3 className="text-lg font-semibold text-slate-900 mb-4">Location</h3>
+            <div className="space-y-4">
+              <p className="text-slate-700">{job.address}</p>
+              {coordinates ? (
+                <div className="h-64 rounded-lg overflow-hidden border border-slate-200">
+                  <Map
+                    initialViewState={{
+                      latitude: coordinates.latitude,
+                      longitude: coordinates.longitude,
+                      zoom: 15
+                    }}
+                    style={{ width: '100%', height: '100%' }}
+                    mapStyle="mapbox://styles/mapbox/streets-v11"
+                    mapboxAccessToken={process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN}
+                  >
+                    <Marker
+                      latitude={coordinates.latitude}
+                      longitude={coordinates.longitude}
+                      anchor="bottom"
+                    >
+                      <div className="w-6 h-6 bg-primary-red rounded-full border-2 border-white shadow-lg flex items-center justify-center">
+                        <svg className="w-4 h-4 text-white" fill="currentColor" viewBox="0 0 20 20">
+                          <path fillRule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clipRule="evenodd" />
+                        </svg>
+                      </div>
+                    </Marker>
+                  </Map>
+                </div>
+              ) : geocodingLoading ? (
+                <div className="h-64 bg-slate-100 rounded-lg flex items-center justify-center">
+                  <div className="text-slate-500">Loading map...</div>
+                </div>
+              ) : (
+                <div className="h-64 bg-slate-100 rounded-lg flex items-center justify-center">
+                  <div className="text-slate-500">Unable to load map</div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Photos Section */}
         <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm">
           <div className="flex items-center justify-between mb-6">
@@ -896,19 +1782,21 @@ export default function JobDetailPage() {
                         </span>
                       )}
                     </div>
-                    <button
-                      onClick={(e) => {
-                        e.preventDefault()
-                        e.stopPropagation()
-                        handleDeletePhoto(photo.id, e)
-                      }}
-                      className="absolute top-2 right-2 w-7 h-7 bg-red-500 text-white rounded-lg opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center hover:bg-red-600"
-                      title="Delete photo"
-                    >
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                      </svg>
-                    </button>
+                    {(userRoles.some(role => role.name === 'super_admin')) && (
+                      <button
+                        onClick={(e) => {
+                          e.preventDefault()
+                          e.stopPropagation()
+                          handleDeletePhoto(photo.id, e)
+                        }}
+                        className="absolute top-2 right-2 w-7 h-7 bg-primary-red text-white rounded-lg opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center hover:bg-primary-red-dark"
+                        title="Delete photo"
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                        </svg>
+                      </button>
+                    )}
                   </div>
                   <div className="mt-2">
                     {photo.caption && (
@@ -952,70 +1840,10 @@ export default function JobDetailPage() {
           )}
         </div>
 
-        {/* Notes Section */}
+        {/* Comments Section */}
         <div className="bg-white rounded-xl border border-slate-200 p-6 mt-6 shadow-sm">
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="text-lg font-semibold text-slate-900">Notes</h2>
-            {!editingNotes && job.installation_info && (
-              <button
-                onClick={startEditNotes}
-                className="p-1 text-slate-400 hover:text-slate-600 transition"
-                title="Edit notes"
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                </svg>
-              </button>
-            )}
-          </div>
-          
-          {editingNotes ? (
-            <div className="space-y-3">
-              <textarea
-                value={editNotes}
-                onChange={(e) => setEditNotes(e.target.value)}
-                placeholder="Add installation notes, important details, or any other relevant information..."
-                className="w-full border border-slate-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent resize-none"
-                rows={4}
-                disabled={saving}
-              />
-              <div className="flex gap-2">
-                <button
-                  onClick={() => handleUpdateJobField('installation_info', editNotes)}
-                  disabled={saving}
-                  className="px-4 py-2 bg-red-600 text-white rounded-lg font-medium hover:bg-red-700 disabled:opacity-50"
-                >
-                  {saving ? 'Saving...' : 'Save Notes'}
-                </button>
-                <button
-                  onClick={() => cancelEdit('notes')}
-                  disabled={saving}
-                  className="px-4 py-2 bg-slate-200 text-slate-700 rounded-lg font-medium hover:bg-slate-300"
-                >
-                  Cancel
-                </button>
-              </div>
-            </div>
-          ) : job.installation_info ? (
-            <div className="prose prose-slate max-w-none">
-              <p className="text-slate-600 whitespace-pre-wrap">{job.installation_info}</p>
-            </div>
-          ) : (
-            <div className="text-center py-6">
-              <div className="w-12 h-12 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-3">
-                <svg className="w-6 h-6 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                </svg>
-              </div>
-              <p className="text-slate-600 mb-3">No notes added yet</p>
-              <button
-                onClick={startEditNotes}
-                className="px-4 py-2 bg-red-600 text-white rounded-lg font-medium hover:bg-red-700 transition"
-              >
-                Add Notes
-              </button>
-            </div>
-          )}
+          <h2 className="text-lg font-semibold text-slate-900 mb-4">Comments</h2>
+          <JobNotesSection jobId={String(jobId)} user={user} jobOwnerId={job?.user_id} />
         </div>
       </main>
 
@@ -1030,7 +1858,7 @@ export default function JobDetailPage() {
             e.stopPropagation()
           }}>
             {/* Debug info */}
-            <div className="absolute top-0 left-0 bg-red-500 text-white p-2 text-xs z-20">
+            <div className="absolute top-0 left-0 bg-primary-red text-white p-2 text-xs z-20">
               Modal Open - Photo ID: {selectedPhoto.id}
             </div>
             <button

@@ -9,6 +9,7 @@ import Image from 'next/image'
 
 type RawJobPhoto = {
   id: number
+  user_id: string
   image_url: string
   caption?: string
   photo_type?: string
@@ -16,10 +17,13 @@ type RawJobPhoto = {
   latitude?: number
   longitude?: number
   job_id: number
+  jobs?: { job_name: string }
+  profiles?: { avatar_url?: string }
 }
 
 type JobPhoto = RawJobPhoto & {
   job_name?: string
+  uploader_avatar?: string
 }
 
 export default function GalleryPage() {
@@ -29,6 +33,7 @@ export default function GalleryPage() {
   const [selectedPhoto, setSelectedPhoto] = useState<JobPhoto | null>(null)
   const [showPhotoModal, setShowPhotoModal] = useState(false)
   const [filterType, setFilterType] = useState<string>('all')
+  const [userRoles, setUserRoles] = useState<string[]>([])
 
   const router = useRouter()
   const supabase = createClient()
@@ -38,30 +43,15 @@ export default function GalleryPage() {
     : photos.filter(photo => photo.photo_type === filterType)
 
   const fetchAllPhotos = useCallback(async () => {
-    // Fetch jobs for current user first to get job names
-    const { data: jobsData, error: jobsError } = await supabase
-      .from('jobs')
-      .select('id, job_name')
-      .eq('user_id', user?.id)
+    if (!user) return
 
-    if (jobsError) {
-      console.error('Error fetching jobs:', jobsError)
-      return
-    }
-
-    // Get job IDs for the current user
-    const jobIds = jobsData?.map((job: { id: number; job_name: string }) => job.id) || []
-
-    if (jobIds.length === 0) {
-      setPhotos([])
-      return
-    }
-
-    // Fetch all photos for user's jobs
+    // Fetch all photos from accessible jobs (RLS policy handles access control)
     const { data: photosData, error: photosError } = await supabase
       .from('job_photos')
-      .select('*')
-      .in('job_id', jobIds)
+      .select(`
+        *,
+        jobs(job_name)
+      `)
       .order('created_at', { ascending: false })
 
     if (photosError) {
@@ -69,14 +59,25 @@ export default function GalleryPage() {
       return
     }
 
-    // Combine photos with job names
-    const photosWithJobNames = photosData?.map((photo: RawJobPhoto) => ({
-      ...photo,
-      job_name: jobsData?.find((job: { id: number; job_name: string }) => job.id === photo.job_id)?.job_name
-    })) || []
+    // Fetch uploader profiles separately
+    const photosWithProfiles = await Promise.all(
+      (photosData || []).map(async (photo: RawJobPhoto & { jobs?: { job_name: string } }) => {
+        const { data: profileData } = await supabase
+          .from('profiles')
+          .select('avatar_url')
+          .eq('id', photo.user_id)
+          .single()
 
-    setPhotos(photosWithJobNames)
-  }, [supabase, user?.id])
+        return {
+          ...photo,
+          job_name: photo.jobs?.job_name,
+          uploader_avatar: profileData?.avatar_url
+        }
+      })
+    )
+
+    setPhotos(photosWithProfiles)
+  }, [supabase, user])
 
   useEffect(() => {
     const checkUser = async () => {
@@ -87,6 +88,16 @@ export default function GalleryPage() {
       }
 
       setUser(data.user)
+
+      // Get user roles
+      const { data: userRolesData } = await supabase
+        .from('user_roles')
+        .select('roles(name)')
+        .eq('user_id', data.user.id)
+      
+      const roles = (userRolesData as unknown as { roles: { name: string } }[])?.map(ur => ur.roles?.name).filter(Boolean) || []
+      setUserRoles(roles)
+
       await fetchAllPhotos()
       setLoading(false)
     }
@@ -125,7 +136,12 @@ export default function GalleryPage() {
               </Link>
               <div>
                 <h1 className="text-2xl font-bold text-slate-900">Photo Gallery</h1>
-                <p className="text-slate-600 text-sm">All photos from your jobs</p>
+                <p className="text-slate-600 text-sm">
+                  {userRoles.includes('brand_ambassador') || userRoles.includes('super_admin')
+                    ? 'All photos from every job'
+                    : 'All photos from your accessible jobs'
+                  }
+                </p>
               </div>
             </div>
             <div className="flex items-center gap-3">
@@ -210,6 +226,21 @@ export default function GalleryPage() {
                       </span>
                     )}
                   </div>
+                  {photo.uploader_avatar && (
+                    <div className="absolute bottom-2 left-2">
+                      <Image
+                        src={photo.uploader_avatar}
+                        alt="Uploader avatar"
+                        width={20}
+                        height={20}
+                        className="w-5 h-5 rounded-full border-2 border-white shadow-sm"
+                        unoptimized
+                        onError={(e) => {
+                          e.currentTarget.src = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"%3E%3Cpath d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"%3E%3C/path%3E%3Ccircle cx="12" cy="7" r="4"%3E%3C/circle%3E%3C/svg%3E'
+                        }}
+                      />
+                    </div>
+                  )}
                 </div>
                 <div className="mt-2">
                   {photo.caption && (
