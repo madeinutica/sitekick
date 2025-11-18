@@ -101,6 +101,8 @@
   - **COMPLETED**: Fixed all database queries in src/app/jobs/[id]/page.tsx to use parseInt(jobId as string) instead of jobId directly. This resolves the issue where addresses weren't saving due to type mismatch between URL string parameters and integer database IDs. Fixed queries in fetchJob, fetchPhotos, handleUpdateJobField, handleDeleteJob, fetchNotes, handleAddNote, and assignment update functions. Application builds successfully without errors.
 - [x] Fix super admin job deletion by adding CASCADE DELETE constraints
   - **COMPLETED**: Identified that photo_tags table was missing CASCADE DELETE constraint, preventing job deletion when photos had tags. Added CASCADE DELETE to all foreign key constraints (job_assignments, job_photos, notes, photo_tags) and ensured super admin DELETE policy is properly configured. Job deletion now works for super admin users.
+- [x] Fix Vercel deployment TypeScript compilation errors
+  - **COMPLETED**: Fixed TypeScript compilation errors by updating all profile property references from 'name' to 'full_name' throughout the codebase to match the database schema. Updated profile type definitions, property accesses, and database queries in src/app/jobs/page.tsx. Application now builds successfully without errors and deploys to Vercel.
 PROGRESS TRACKING:
 - If any tools are available to manage the above todo list, use it to track progress through this checklist.
 - After completing each step, mark it complete and add a summary.
