@@ -168,12 +168,12 @@ export default function JobsPage() {
           if (roles.includes('super_admin')) {
             const { data: usersData } = await supabase
               .from('profiles')
-              .select('id, name, avatar_url')
-              .order('name')
+              .select('id, full_name, avatar_url')
+              .order('full_name')
             if (usersData) {
-              setUsers(usersData.map((profile: { id: string; name: string | null; email: string; avatar_url: string | null }) => ({
+              setUsers(usersData.map((profile: { id: string; full_name: string | null; avatar_url: string | null }) => ({
                 id: profile.id,
-                name: profile.name,
+                full_name: profile.full_name,
                 email: '', // Email not accessible client-side
                 avatar_url: profile.avatar_url
               })))
@@ -299,7 +299,7 @@ export default function JobsPage() {
                   </div>
                 )}
                 <span className="text-sm font-medium text-slate-700">
-                  {profile?.name || 'Name'}
+                  {profile?.full_name || 'Name'}
                 </span>
               </Link>
               <button
@@ -331,7 +331,7 @@ export default function JobsPage() {
                   {filteredJobs.length} of {jobs.length} total jobs
                   {userFilter !== 'all' && users.find(u => u.id === userFilter) && (
                     <span className="ml-2 text-primary-red">
-                      (filtered by {users.find(u => u.id === userFilter)?.name || 'User'})
+                      (filtered by {users.find(u => u.id === userFilter)?.full_name || 'User'})
                     </span>
                   )}
                 </p>
@@ -354,7 +354,7 @@ export default function JobsPage() {
                           )
                           return (
                             <option key={user.id} value={user.id}>
-                              {user.name || 'Unnamed User'} ({userJobs.length} jobs)
+                              {user.full_name || 'Unnamed User'} ({userJobs.length} jobs)
                             </option>
                           )
                         })}
@@ -446,7 +446,7 @@ export default function JobsPage() {
                           {u.avatar_url ? (
                             <Image
                               src={u.avatar_url}
-                              alt={u.name || 'User'}
+                              alt={u.full_name || 'User'}
                               width={32}
                               height={32}
                               className="w-8 h-8 rounded-full object-cover"
