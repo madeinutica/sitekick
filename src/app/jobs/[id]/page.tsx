@@ -10,6 +10,7 @@ import Image from 'next/image'
 import Map, { Marker } from 'react-map-gl/mapbox'
 import 'mapbox-gl/dist/mapbox-gl.css'
 
+
 // Force dynamic rendering to avoid static generation issues
 export const dynamic = 'force-dynamic'
 
@@ -233,11 +234,11 @@ function JobNotesSection({ jobId, user, jobOwnerId }: { jobId: string, user: Use
       
       {/* Comment form - only show for authorized users */}
       {canComment ? (
-        <form className="flex items-center gap-3 pt-2 border-t border-slate-100" onSubmit={e => { e.preventDefault(); handleAddNote() }}>
+        <form className="flex items-center gap-2 pt-2 border-t border-slate-100" onSubmit={e => { e.preventDefault(); handleAddNote() }}>
           {profile?.avatar_url ? (
-            <Image src={profile.avatar_url} alt="avatar" width={40} height={40} className="rounded-full w-10 h-10 object-cover" />
+            <Image src={profile.avatar_url} alt="avatar" width={40} height={40} className="rounded-full w-10 h-10 object-cover shrink-0" />
           ) : (
-            <div className="w-10 h-10 bg-primary-red rounded-full flex items-center justify-center">
+            <div className="w-10 h-10 bg-primary-red rounded-full flex items-center justify-center shrink-0">
               <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
               </svg>
@@ -245,7 +246,7 @@ function JobNotesSection({ jobId, user, jobOwnerId }: { jobId: string, user: Use
           )}
           <input
             type="text"
-            className="flex-1 border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-red"
+            className="flex-1 min-w-0 border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-red"
             placeholder="Add a comment"
             value={noteContent}
             onChange={e => setNoteContent(e.target.value)}
@@ -253,7 +254,7 @@ function JobNotesSection({ jobId, user, jobOwnerId }: { jobId: string, user: Use
           />
           <button
             type="submit"
-            className="px-4 py-2 bg-primary-red text-white rounded-lg font-semibold text-sm hover:bg-primary-red-dark transition disabled:opacity-50"
+            className="px-3 py-2 bg-primary-red text-white rounded-lg font-semibold text-sm hover:bg-primary-red-dark transition disabled:opacity-50 shrink-0"
             disabled={loading || !noteContent.trim()}
           >Post</button>
         </form>
@@ -278,6 +279,7 @@ type Job = {
   job_name: string
   installation_info: string
   address: string
+  category: string
   user_id?: string
 }
 
@@ -290,6 +292,17 @@ type JobPhoto = {
   latitude?: number
   longitude?: number
   location_accuracy?: number
+}
+
+type JobDocument = {
+  id: number
+  file_name: string
+  file_url: string
+  file_type: string
+  file_size: number
+  uploaded_by: string
+  created_at: string
+  uploader_name?: string
 }
 
 export default function JobDetailPage() {
@@ -307,9 +320,11 @@ export default function JobDetailPage() {
   const [editingJobName, setEditingJobName] = useState(false)
   const [editingAddress, setEditingAddress] = useState(false)
   const [editingAssignments, setEditingAssignments] = useState(false)
+  const [editingCategory, setEditingCategory] = useState(false)
   const [editJobName, setEditJobName] = useState('')
   const [editAddress, setEditAddress] = useState('')
   const [editAssignedUserIds, setEditAssignedUserIds] = useState<string[]>([])
+  const [editCategory, setEditCategory] = useState('')
   const [saving, setSaving] = useState(false)
   const [selectedPhoto, setSelectedPhoto] = useState<JobPhoto | null>(null)
   const [showPhotoModal, setShowPhotoModal] = useState(false)
@@ -319,6 +334,11 @@ export default function JobDetailPage() {
   const [userRoles, setUserRoles] = useState<{ name: string }[]>([])
   const [coordinates, setCoordinates] = useState<{ latitude: number; longitude: number } | null>(null)
   const [geocodingLoading, setGeocodingLoading] = useState(false)
+  const [documents, setDocuments] = useState<JobDocument[]>([])
+  const [uploadingDocument, setUploadingDocument] = useState(false)
+  const [selectedDocument, setSelectedDocument] = useState<JobDocument | null>(null)
+  const [showDocumentModal, setShowDocumentModal] = useState(false)
+  const [documentFileInputRef, setDocumentFileInputRef] = useState<HTMLInputElement | null>(null)
   
   const router = useRouter()
   const params = useParams()
@@ -385,6 +405,34 @@ export default function JobDetailPage() {
     }
   }, [supabase, jobId])
 
+  const fetchDocuments = useCallback(async () => {
+    if (!jobId) return
+    const { data, error } = await supabase
+      .from('job_documents')
+      .select('*')
+      .eq('job_id', parseInt(jobId as string))
+      .order('created_at', { ascending: false })
+    if (error) {
+      console.error('Error fetching documents:', error)
+    } else {
+      // Fetch uploader names separately
+      const documentsWithNames = await Promise.all(
+        data.map(async (doc: JobDocument) => {
+          const { data: profile } = await supabase
+            .from('profiles')
+            .select('full_name')
+            .eq('id', doc.uploaded_by)
+            .maybeSingle()
+          return {
+            ...doc,
+            uploader_name: profile?.full_name || 'Unknown User'
+          }
+        })
+      )
+      setDocuments(documentsWithNames)
+    }
+  }, [supabase, jobId])
+
   useEffect(() => {
     const checkUser = async () => {
       const { data } = await supabase.auth.getUser()
@@ -394,6 +442,7 @@ export default function JobDetailPage() {
         setUser(data.user)
         fetchJob()
         fetchPhotos()
+        fetchDocuments()
         
         // Get profile data and check if super user
         const { data: profileData } = await supabase
@@ -435,7 +484,7 @@ export default function JobDetailPage() {
       }
     }
     checkUser()
-  }, [router, supabase, fetchJob, fetchPhotos, jobId])
+  }, [router, supabase, fetchJob, fetchPhotos, fetchDocuments, jobId])
 
   // Fetch assigned users with their roles
   useEffect(() => {
@@ -696,6 +745,82 @@ export default function JobDetailPage() {
     setUploading(false)
   }
 
+  const handleDocumentUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    if (!event.target.files || event.target.files.length === 0 || !user || !job) {
+      return
+    }
+
+    setUploadingDocument(true)
+    const file = event.target.files[0]
+    const fileExt = file.name.split('.').pop()?.toLowerCase() || 'pdf'
+    const fileName = `${user.id}/${job.id}/${Date.now()}.${fileExt}`
+
+    try {
+      // Upload to storage
+      const { error: uploadError } = await supabase.storage
+        .from('job_documents')
+        .upload(fileName, file)
+
+      if (uploadError) {
+        throw new Error(`Upload failed: ${uploadError.message}`)
+      }
+
+      const { data: { publicUrl } } = supabase.storage.from('job_documents').getPublicUrl(fileName)
+
+      // Insert to database
+      const { error: insertError } = await supabase.from('job_documents').insert({
+        job_id: job.id,
+        file_name: file.name,
+        file_url: publicUrl,
+        file_type: file.type,
+        file_size: file.size,
+        uploaded_by: user.id
+      })
+
+      if (insertError) {
+        throw new Error(`Database insert failed: ${insertError.message}`)
+      }
+
+      // Refresh documents
+      await fetchDocuments()
+
+    } catch (error) {
+      console.error('Document upload error:', error)
+      alert(`Failed to upload document: ${error instanceof Error ? error.message : 'Unknown error'}`)
+    }
+
+    setUploadingDocument(false)
+  }
+
+  const handleDeleteDocument = async (documentId: number, e: React.MouseEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+
+    if (!confirm('Are you sure you want to delete this document?')) {
+      return
+    }
+
+    const { error } = await supabase
+      .from('job_documents')
+      .delete()
+      .eq('id', documentId)
+
+    if (error) {
+      console.error(error)
+      alert('Failed to delete document')
+    } else {
+      fetchDocuments()
+    }
+  }
+
+  const formatFileSize = (bytes: number) => {
+    if (bytes === 0) return '0 Bytes'
+    const k = 1024
+    const sizes = ['Bytes', 'KB', 'MB', 'GB']
+    const i = Math.floor(Math.log(bytes) / Math.log(k))
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
+  }
+
   const handleUpdateJobField = async (field: string, value: string) => {
     if (!job || !jobId) return
     
@@ -756,6 +881,9 @@ export default function JobDetailPage() {
       } else if (field === 'assignments') {
         setEditingAssignments(false)
         setEditAssignedUserIds([])
+      } else if (field === 'category') {
+        setEditingCategory(false)
+        setEditCategory('')
       }
     }
     setSaving(false)
@@ -776,6 +904,11 @@ export default function JobDetailPage() {
     setEditingAssignments(true)
   }
 
+  const startEditCategory = () => {
+    setEditCategory(job?.category || '')
+    setEditingCategory(true)
+  }
+
   const cancelEdit = (type: string) => {
     if (type === 'job_name') {
       setEditingJobName(false)
@@ -786,6 +919,9 @@ export default function JobDetailPage() {
     } else if (type === 'assignment') {
       setEditingAssignments(false)
       setEditAssignedUserIds([])
+    } else if (type === 'category') {
+      setEditingCategory(false)
+      setEditCategory('')
     }
   }
 
@@ -854,33 +990,31 @@ export default function JobDetailPage() {
                 </button>
               </Link>
               <div className="flex items-center gap-2">
-                <Link href="/profile" className="flex items-center gap-2 hover:bg-slate-50 rounded-lg px-2 py-1 transition">
-                  {profile?.avatar_url ? (
-                    <Image 
-                      src={profile.avatar_url} 
-                      alt="Profile" 
-                      width={28}
-                      height={28}
-                      className="w-7 h-7 rounded-full object-cover"
-                      unoptimized
-                    />
-                  ) : (
-                    <div className="w-7 h-7 bg-primary-red-light rounded-full flex items-center justify-center">
-                      <svg className="w-4 h-4 text-primary-red" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-                      </svg>
-                    </div>
-                  )}
-                  <span className="text-sm font-medium text-slate-700">
-                    {profile?.full_name || 'Name'}
-                  </span>
-                </Link>
                 <div className="relative" ref={dropdownRef}>
                   <button
                     onClick={() => setShowAccountDropdown(!showAccountDropdown)}
-                    className="w-8 h-8 flex items-center justify-center hover:bg-slate-100 rounded-lg transition"
+                    className="flex items-center gap-2 hover:bg-slate-50 rounded-lg px-2 py-1 transition"
                   >
-                    <svg className="w-4 h-4 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    {profile?.avatar_url ? (
+                      <Image 
+                        src={profile.avatar_url} 
+                        alt="Profile" 
+                        width={28}
+                        height={28}
+                        className="w-7 h-7 rounded-full object-cover"
+                        unoptimized
+                      />
+                    ) : (
+                      <div className="w-7 h-7 bg-primary-red-light rounded-full flex items-center justify-center">
+                        <svg className="w-4 h-4 text-primary-red" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                        </svg>
+                      </div>
+                    )}
+                    <span className="text-sm font-medium text-slate-700">
+                      {profile?.full_name || 'Name'}
+                    </span>
+                    <svg className="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                     </svg>
                   </button>
@@ -892,7 +1026,16 @@ export default function JobDetailPage() {
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                           </svg>
-                          Profile Settings
+                          Profile
+                        </div>
+                      </Link>
+                      <Link href="/settings" onClick={() => setShowAccountDropdown(false)}>
+                        <div className="px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 cursor-pointer flex items-center gap-2">
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                          </svg>
+                          Settings
                         </div>
                       </Link>
                       <button
@@ -942,19 +1085,77 @@ export default function JobDetailPage() {
                   </div>
                 </div>
               ) : (
-                <div className="flex items-center justify-center gap-2">
-                  <h1 className="text-lg font-bold text-slate-900">{job.job_name}</h1>
-                  {(userRoles.some(role => role.name === 'super_admin')) && (
-                    <button
-                      onClick={startEditJobName}
-                      className="p-1 text-slate-400 hover:text-slate-600 transition"
-                      title="Edit job name"
-                    >
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                      </svg>
-                    </button>
-                  )}
+                <div className="text-center">
+                  <div className="flex items-center justify-center gap-2">
+                    <h1 className="text-lg font-bold text-slate-900">{job.job_name}</h1>
+                    {(userRoles.some(role => role.name === 'super_admin')) && (
+                      <button
+                        onClick={startEditJobName}
+                        className="p-1 text-slate-400 hover:text-slate-600 transition"
+                        title="Edit job name"
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                        </svg>
+                      </button>
+                    )}
+                  </div>
+                  <div className="flex items-center justify-center gap-2 mt-2">
+                    {editingCategory ? (
+                      <div className="flex items-center gap-2">
+                        <select
+                          value={editCategory}
+                          onChange={(e) => setEditCategory(e.target.value)}
+                          className="text-sm border border-slate-300 rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-primary-red focus:border-transparent"
+                          disabled={saving}
+                        >
+                          <option value="Windows">Windows</option>
+                          <option value="Bathrooms">Bathrooms</option>
+                          <option value="Siding">Siding</option>
+                          <option value="Doors">Doors</option>
+                        </select>
+                        <button
+                          onClick={() => handleUpdateJobField('category', editCategory)}
+                          disabled={saving || !editCategory.trim()}
+                          className="px-2 py-1 text-xs bg-primary-red text-white rounded hover:bg-primary-red-dark disabled:opacity-50"
+                        >
+                          {saving ? '...' : 'Save'}
+                        </button>
+                        <button
+                          onClick={() => cancelEdit('category')}
+                          disabled={saving}
+                          className="px-2 py-1 text-xs bg-slate-200 text-slate-700 rounded hover:bg-slate-300"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    ) : (
+                      <>
+                        {job.category && (
+                          <span className={`px-2 py-1 text-xs font-semibold rounded-full ${
+                            job.category === 'Windows' ? 'bg-blue-500 text-white' :
+                            job.category === 'Bathrooms' ? 'bg-green-500 text-white' :
+                            job.category === 'Siding' ? 'bg-yellow-500 text-white' :
+                            job.category === 'Doors' ? 'bg-purple-500 text-white' :
+                            'bg-slate-500 text-white'
+                          }`}>
+                            {job.category}
+                          </span>
+                        )}
+                        {(userRoles.some(role => role.name === 'super_admin')) && (
+                          <button
+                            onClick={startEditCategory}
+                            className="p-1 text-slate-400 hover:text-slate-600 transition"
+                            title="Edit category"
+                          >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                            </svg>
+                          </button>
+                        )}
+                      </>
+                    )}
+                  </div>
                 </div>
               )}
               {job.address && !editingAddress && (
@@ -1214,19 +1415,77 @@ export default function JobDetailPage() {
                     </div>
                   </div>
                 ) : (
-                  <div className="flex items-center gap-2">
-                    <h1 className="text-xl font-bold text-slate-900">{job.job_name}</h1>
-                    {(userRoles.some(role => role.name === 'super_admin')) && (
-                      <button
-                        onClick={startEditJobName}
-                        className="p-1 text-slate-400 hover:text-slate-600 transition"
-                        title="Edit job name"
-                      >
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                        </svg>
-                      </button>
-                    )}
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h1 className="text-xl font-bold text-slate-900">{job.job_name}</h1>
+                      {(userRoles.some(role => role.name === 'super_admin')) && (
+                        <button
+                          onClick={startEditJobName}
+                          className="p-1 text-slate-400 hover:text-slate-600 transition"
+                          title="Edit job name"
+                        >
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                          </svg>
+                        </button>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2 mt-2">
+                      {editingCategory ? (
+                        <div className="flex items-center gap-2">
+                          <select
+                            value={editCategory}
+                            onChange={(e) => setEditCategory(e.target.value)}
+                            className="text-sm border border-slate-300 rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-primary-red focus:border-transparent"
+                            disabled={saving}
+                          >
+                            <option value="Windows">Windows</option>
+                            <option value="Bathrooms">Bathrooms</option>
+                            <option value="Siding">Siding</option>
+                            <option value="Doors">Doors</option>
+                          </select>
+                          <button
+                            onClick={() => handleUpdateJobField('category', editCategory)}
+                            disabled={saving || !editCategory.trim()}
+                            className="px-2 py-1 text-xs bg-primary-red text-white rounded hover:bg-primary-red-dark disabled:opacity-50"
+                          >
+                            {saving ? '...' : 'Save'}
+                          </button>
+                          <button
+                            onClick={() => cancelEdit('category')}
+                            disabled={saving}
+                            className="px-2 py-1 text-xs bg-slate-200 text-slate-700 rounded hover:bg-slate-300"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      ) : (
+                        <>
+                          {job.category && (
+                            <span className={`px-2 py-1 text-xs font-semibold rounded-full ${
+                              job.category === 'Windows' ? 'bg-blue-500 text-white' :
+                              job.category === 'Bathrooms' ? 'bg-green-500 text-white' :
+                              job.category === 'Siding' ? 'bg-yellow-500 text-white' :
+                              job.category === 'Doors' ? 'bg-purple-500 text-white' :
+                              'bg-slate-500 text-white'
+                            }`}>
+                              {job.category}
+                            </span>
+                          )}
+                          {(userRoles.some(role => role.name === 'super_admin')) && (
+                            <button
+                              onClick={startEditCategory}
+                              className="p-1 text-slate-400 hover:text-slate-600 transition"
+                              title="Edit category"
+                            >
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                              </svg>
+                            </button>
+                          )}
+                        </>
+                      )}
+                    </div>
                   </div>
                 )}
                 {job.address && !editingAddress && (
@@ -1521,6 +1780,30 @@ export default function JobDetailPage() {
 
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {/* Mobile Photo Upload Button */}
+        <div className="md:hidden mb-6">
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            className="w-full py-4 px-6 bg-primary-red text-white rounded-xl font-bold text-lg hover:bg-primary-red-dark transition flex items-center justify-center gap-3 shadow-lg"
+          >
+            <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
+            </svg>
+            <span>Add Photo</span>
+          </button>
+        </div>
+
+        {/* Hidden file input for mobile camera */}
+        <input
+          type="file"
+          accept="image/*"
+          capture="environment"
+          onChange={handlePhotoUpload}
+          ref={fileInputRef}
+          style={{ display: 'none' }}
+        />
+
         {/* Assigned Users Section */}
         <div className="bg-white rounded-xl p-6 mb-6">
           <h3 className="text-lg font-semibold text-slate-900 mb-4">Assigned Staff</h3>
@@ -1662,14 +1945,6 @@ export default function JobDetailPage() {
                   />
                 </div>
                 <div className="flex space-x-2">
-                  <input
-                    type="file"
-                    accept="image/*"
-                    capture="environment"
-                    onChange={handlePhotoUpload}
-                    ref={fileInputRef}
-                    style={{ display: 'none' }}
-                  />
                   <button
                     onClick={() => fileInputRef.current?.click()}
                     disabled={uploading}
@@ -1840,6 +2115,140 @@ export default function JobDetailPage() {
           )}
         </div>
 
+        {/* Documents Section */}
+        <div className="bg-white rounded-xl border border-slate-200 p-6 mt-6 shadow-sm">
+          <div className="flex items-center justify-between mb-6">
+            <div>
+              <h2 className="text-lg font-semibold text-slate-900">Documents</h2>
+              <p className="text-slate-600 text-sm mt-1">{documents.length} documents uploaded</p>
+            </div>
+            <button
+              onClick={() => documentFileInputRef?.click()}
+              disabled={uploadingDocument}
+              className="px-4 py-2 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition flex items-center space-x-2 disabled:opacity-50"
+            >
+              {uploadingDocument ? (
+                <>
+                  <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="m4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  <span>Uploading...</span>
+                </>
+              ) : (
+                <>
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                  </svg>
+                  <span>Add Document</span>
+                </>
+              )}
+            </button>
+          </div>
+
+          {/* Hidden file input for documents */}
+          <input
+            type="file"
+            accept=".pdf,.doc,.docx,.txt,.xlsx,.xls,.ppt,.pptx"
+            onChange={handleDocumentUpload}
+            ref={(ref) => setDocumentFileInputRef(ref)}
+            style={{ display: 'none' }}
+          />
+
+          {/* Documents List */}
+          {documents.length > 0 ? (
+            <div className="space-y-4">
+              {documents.map((document) => (
+                <div key={document.id} className="flex items-center justify-between p-4 border border-slate-200 rounded-lg hover:bg-slate-50 transition">
+                  <div className="flex items-center gap-3 flex-1">
+                    {/* File Icon */}
+                    <div className="w-10 h-10 bg-slate-100 rounded-lg flex items-center justify-center">
+                      {document.file_type.includes('pdf') ? (
+                        <svg className="w-6 h-6 text-red-500" fill="currentColor" viewBox="0 0 20 20">
+                          <path fillRule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4zm2 6a1 1 0 011-1h6a1 1 0 110 2H7a1 1 0 01-1-1zm1 3a1 1 0 100 2h6a1 1 0 100-2H7z" clipRule="evenodd" />
+                        </svg>
+                      ) : document.file_type.includes('word') || document.file_type.includes('document') ? (
+                        <svg className="w-6 h-6 text-blue-500" fill="currentColor" viewBox="0 0 20 20">
+                          <path fillRule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4zm2 6a1 1 0 011-1h6a1 1 0 110 2H7a1 1 0 01-1-1zm1 3a1 1 0 100 2h6a1 1 0 100-2H7z" clipRule="evenodd" />
+                        </svg>
+                      ) : document.file_type.includes('excel') || document.file_type.includes('spreadsheet') ? (
+                        <svg className="w-6 h-6 text-green-500" fill="currentColor" viewBox="0 0 20 20">
+                          <path fillRule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4zm2 6a1 1 0 011-1h6a1 1 0 110 2H7a1 1 0 01-1-1zm1 3a1 1 0 100 2h6a1 1 0 100-2H7z" clipRule="evenodd" />
+                        </svg>
+                      ) : (
+                        <svg className="w-6 h-6 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                        </svg>
+                      )}
+                    </div>
+
+                    {/* File Info */}
+                    <div className="flex-1">
+                      <h3 className="font-medium text-slate-900 truncate">{document.file_name}</h3>
+                      <div className="flex items-center gap-4 text-sm text-slate-500">
+                        <span>{formatFileSize(document.file_size)}</span>
+                        <span>Uploaded by {document.uploader_name}</span>
+                        <span>{new Date(document.created_at).toLocaleDateString()}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Actions */}
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => {
+                        setSelectedDocument(document)
+                        setShowDocumentModal(true)
+                      }}
+                      className="px-3 py-1 text-sm bg-slate-100 text-slate-700 rounded hover:bg-slate-200 transition"
+                    >
+                      View
+                    </button>
+                    <button
+                      onClick={() => {
+                        const link = window.document.createElement('a')
+                        link.href = document.file_url
+                        link.download = document.file_name
+                        link.click()
+                      }}
+                      className="px-3 py-1 text-sm bg-indigo-600 text-white rounded hover:bg-indigo-700 transition"
+                    >
+                      Download
+                    </button>
+                    {(userRoles.some(role => role.name === 'super_admin')) && (
+                      <button
+                        onClick={(e) => handleDeleteDocument(document.id, e)}
+                        className="p-1 text-slate-400 hover:text-red-600 transition"
+                        title="Delete document"
+                      >
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                        </svg>
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="text-center py-12">
+              <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                <svg className="w-8 h-8 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+              </div>
+              <h3 className="text-lg font-medium text-slate-900 mb-2">No documents yet</h3>
+              <p className="text-slate-600 mb-4">Upload contracts, permits, or other important documents</p>
+              <button
+                onClick={() => documentFileInputRef?.click()}
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition"
+              >
+                Upload Your First Document
+              </button>
+            </div>
+          )}
+        </div>
+
         {/* Comments Section */}
         <div className="bg-white rounded-xl border border-slate-200 p-6 mt-6 shadow-sm">
           <h2 className="text-lg font-semibold text-slate-900 mb-4">Comments</h2>
@@ -1969,6 +2378,81 @@ export default function JobDetailPage() {
                   </svg>
                   View on Map
                 </a>
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* Document Modal */}
+      {showDocumentModal && selectedDocument ? (
+        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4" onClick={() => setShowDocumentModal(false)}>
+          <div className="relative max-w-4xl max-h-full bg-white rounded-lg overflow-hidden" onClick={(e) => e.stopPropagation()}>
+            <button
+              onClick={() => setShowDocumentModal(false)}
+              className="absolute top-4 right-4 z-10 w-10 h-10 bg-black bg-opacity-50 text-white rounded-full flex items-center justify-center hover:bg-opacity-70 transition"
+            >
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+
+            {/* Document Header */}
+            <div className="p-4 bg-slate-50 border-b border-slate-200">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="font-semibold text-slate-900 truncate">{selectedDocument.file_name}</h3>
+                  <p className="text-sm text-slate-600">
+                    {formatFileSize(selectedDocument.file_size)} • Uploaded by {selectedDocument.uploader_name}
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => {
+                      const link = window.document.createElement('a')
+                      link.href = selectedDocument.file_url
+                      link.download = selectedDocument.file_name
+                      link.click()
+                    }}
+                    className="px-3 py-1 text-sm bg-indigo-600 text-white rounded hover:bg-indigo-700 transition"
+                  >
+                    Download
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Document Viewer */}
+            <div className="relative w-full h-[80vh] bg-slate-100">
+              {selectedDocument.file_type.includes('pdf') ? (
+                <iframe
+                  src={selectedDocument.file_url}
+                  className="w-full h-full"
+                  title={selectedDocument.file_name}
+                />
+              ) : (
+                <div className="flex items-center justify-center h-full">
+                  <div className="text-center">
+                    <div className="w-16 h-16 bg-slate-200 rounded-full flex items-center justify-center mx-auto mb-4">
+                      <svg className="w-8 h-8 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                      </svg>
+                    </div>
+                    <h3 className="text-lg font-medium text-slate-900 mb-2">Preview not available</h3>
+                    <p className="text-slate-600 mb-4">This file type cannot be previewed in the browser</p>
+                    <button
+                      onClick={() => {
+                        const link = window.document.createElement('a')
+                        link.href = selectedDocument.file_url
+                        link.download = selectedDocument.file_name
+                        link.click()
+                      }}
+                      className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition"
+                    >
+                      Download to View
+                    </button>
+                  </div>
+                </div>
               )}
             </div>
           </div>

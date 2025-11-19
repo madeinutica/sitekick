@@ -116,6 +116,24 @@ CREATE POLICY "Jobs are deletable by super admins" ON jobs
     )
   );
 
+DROP POLICY IF EXISTS "Jobs are insertable by authorized users" ON jobs;
+CREATE POLICY "Jobs are insertable by authorized users" ON jobs
+  FOR INSERT WITH CHECK (
+    -- User is super_admin
+    EXISTS (
+      SELECT 1 FROM user_roles ur
+      JOIN roles r ON ur.role_id = r.id
+      WHERE ur.user_id = auth.uid() AND r.name = 'super_admin'
+    )
+    -- OR user has global role that allows writing to all jobs
+    OR EXISTS (
+      SELECT 1 FROM user_roles ur
+      JOIN roles r ON ur.role_id = r.id
+      WHERE ur.user_id = auth.uid()
+      AND r.permissions->'jobs'->>'write' = 'all'
+    )
+  );
+
 -- Update job_photos RLS to use simplified system
 DROP POLICY IF EXISTS "Job photos are viewable based on roles" ON job_photos;
 CREATE POLICY "Job photos are viewable based on roles" ON job_photos

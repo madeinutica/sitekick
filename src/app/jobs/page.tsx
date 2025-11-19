@@ -2,11 +2,10 @@
 
 import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import type { User } from '@supabase/supabase-js'
 import Link from 'next/link'
 import Image from 'next/image'
-import SuperAdminSidebar from '@/components/SuperAdminSidebar'
 
 // Force dynamic rendering to avoid static generation issues
 export const dynamic = 'force-dynamic'
@@ -16,6 +15,7 @@ type Job = {
   job_name: string
   installation_info: string
   address: string
+  category: string
   created_at: string
   user_id: string
   profiles?: { full_name: string | null; avatar_url: string | null }
@@ -28,21 +28,22 @@ export default function JobsPage() {
   const [jobName, setJobName] = useState('')
   const [installationInfo, setInstallationInfo] = useState('')
   const [address, setAddress] = useState('')
+  const [category, setCategory] = useState('Windows')
   const [showForm, setShowForm] = useState(false)
   const [profile, setProfile] = useState<{ full_name: string | null; avatar_url: string | null } | null>(null)
   const [isSuperUser, setIsSuperUser] = useState(false)
   const [selectedUserIds, setSelectedUserIds] = useState<string[]>([])
   const [users, setUsers] = useState<{ id: string; full_name: string | null; email: string; avatar_url: string | null }[]>([])
-  const [userFilter, setUserFilter] = useState<string>('all')
+  const [categoryFilter, setCategoryFilter] = useState<string>('all')
   const router = useRouter()
   const supabase = createClient()
+  const dropdownRef = useRef<HTMLDivElement>(null)
+  const [showAccountDropdown, setShowAccountDropdown] = useState(false)
 
-  // Filter jobs based on selected user
-  const filteredJobs = userFilter === 'all'
+  // Filter jobs based on selected category
+  const filteredJobs = categoryFilter === 'all'
     ? jobs
-    : jobs.filter(job =>
-        job.assignedUsers && job.assignedUsers.some(user => user.id === userFilter)
-      )
+    : jobs.filter(job => job.category === categoryFilter)
 
   const fetchJobs = useCallback(async (userId: string) => {
     // Get user roles first
@@ -185,6 +186,20 @@ export default function JobsPage() {
     checkUser()
   }, [router, supabase, fetchJobs])
 
+  // Handle clicks outside dropdown to close it
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setShowAccountDropdown(false)
+      }
+    }
+
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside)
+    }
+  }, [])
+
   const handleAddJob = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
     if (!user) return
@@ -196,6 +211,7 @@ export default function JobsPage() {
         job_name: jobName, 
         installation_info: installationInfo,
         address: address,
+        category: category,
         user_id: user.id // Keep the creator as user_id
       })
       .select()
@@ -231,6 +247,7 @@ export default function JobsPage() {
     setJobName('')
     setInstallationInfo('')
     setAddress('')
+    setCategory('Windows')
     setSelectedUserIds([])
     setShowForm(false)
   }
@@ -282,32 +299,97 @@ export default function JobsPage() {
               <h1 className="text-2xl font-bold text-slate-900">Jobs</h1>
             </div>
             <div className="flex items-center gap-3">
-              <Link href="/profile" className="flex items-center gap-2 hover:bg-slate-50 rounded-lg px-3 py-2 transition">
-                {profile?.avatar_url ? (
-                  <Image 
-                    src={profile.avatar_url} 
-                    alt="Profile" 
-                    width={32}
-                    height={32}
-                    className="w-8 h-8 rounded-full object-cover"
-                  />
-                ) : (
-                  <div className="w-8 h-8 bg-primary-red-light rounded-full flex items-center justify-center">
-                    <svg className="w-5 h-5 text-primary-red" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-                    </svg>
+              {/* Desktop Account Dropdown */}
+              <div className="hidden md:block relative" ref={dropdownRef}>
+                <button
+                  onClick={() => setShowAccountDropdown(!showAccountDropdown)}
+                  className="flex items-center gap-2 hover:bg-slate-50 rounded-lg px-3 py-2 transition"
+                >
+                  {profile?.avatar_url ? (
+                    <Image 
+                      src={profile.avatar_url} 
+                      alt="Profile" 
+                      width={32}
+                      height={32}
+                      className="w-8 h-8 rounded-full object-cover"
+                    />
+                  ) : (
+                    <div className="w-8 h-8 bg-primary-red-light rounded-full flex items-center justify-center">
+                      <svg className="w-5 h-5 text-primary-red" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                      </svg>
+                    </div>
+                  )}
+                  <span className="text-sm font-medium text-slate-700">
+                    {profile?.full_name || 'Name'}
+                  </span>
+                  <svg className="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                  </svg>
+                </button>
+                {showAccountDropdown && (
+                  <div className="absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg border border-slate-200 py-1 z-50">
+                    <Link href="/profile" className="block px-4 py-2 text-sm text-slate-700 hover:bg-slate-50">
+                      Profile
+                    </Link>
+                    <Link href="/settings" className="block px-4 py-2 text-sm text-slate-700 hover:bg-slate-50">
+                      Settings
+                    </Link>
+                    <button
+                      onClick={handleSignOut}
+                      className="block w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
+                    >
+                      Sign Out
+                    </button>
                   </div>
                 )}
-                <span className="text-sm font-medium text-slate-700">
-                  {profile?.full_name || 'Name'}
-                </span>
-              </Link>
-              <button
-                className="px-4 py-2 text-sm font-medium text-slate-700 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition"
-                onClick={handleSignOut}
-              >
-                Sign Out
-              </button>
+              </div>
+
+              {/* Mobile Account Dropdown */}
+              <div className="md:hidden relative" ref={dropdownRef}>
+                <button
+                  onClick={() => setShowAccountDropdown(!showAccountDropdown)}
+                  className="flex items-center gap-2 hover:bg-slate-50 rounded-lg px-3 py-2 transition"
+                >
+                  {profile?.avatar_url ? (
+                    <Image 
+                      src={profile.avatar_url} 
+                      alt="Profile" 
+                      width={32}
+                      height={32}
+                      className="w-8 h-8 rounded-full object-cover"
+                    />
+                  ) : (
+                    <div className="w-8 h-8 bg-primary-red-light rounded-full flex items-center justify-center">
+                      <svg className="w-5 h-5 text-primary-red" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                      </svg>
+                    </div>
+                  )}
+                  <span className="text-sm font-medium text-slate-700">
+                    {profile?.full_name || 'Name'}
+                  </span>
+                  <svg className="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                  </svg>
+                </button>
+                {showAccountDropdown && (
+                  <div className="absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg border border-slate-200 py-1 z-50">
+                    <Link href="/profile" className="block px-4 py-2 text-sm text-slate-700 hover:bg-slate-50">
+                      Profile
+                    </Link>
+                    <Link href="/settings" className="block px-4 py-2 text-sm text-slate-700 hover:bg-slate-50">
+                      Settings
+                    </Link>
+                    <button
+                      onClick={handleSignOut}
+                      className="block w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
+                    >
+                      Sign Out
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </div>
@@ -316,56 +398,45 @@ export default function JobsPage() {
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="flex gap-8">
-          {/* Super Admin Sidebar */}
-          {isSuperUser && (
-            <SuperAdminSidebar className="hidden lg:block fixed left-0 top-20 h-full w-64" />
-          )}
-
           {/* Main Content Area */}
-          <div className={`flex-1 ${isSuperUser ? 'lg:ml-64' : ''}`}>
+          <div className="flex-1">
 
-            <div className="flex items-center justify-between mb-6">
-              <div>
-                <h2 className="text-2xl font-bold text-slate-900">Your Jobs</h2>
-                <p className="text-slate-600 text-sm mt-1">
-                  {filteredJobs.length} of {jobs.length} total jobs
-                  {userFilter !== 'all' && users.find(u => u.id === userFilter) && (
-                    <span className="ml-2 text-primary-red">
-                      (filtered by {users.find(u => u.id === userFilter)?.full_name || 'User'})
-                    </span>
-                  )}
-                </p>
+            <div className="mb-6">
+              <div className="flex items-center justify-between mb-4">
+                <div>
+                  <h2 className="text-2xl font-bold text-slate-900">Your Jobs</h2>
+                  <p className="text-slate-600 text-sm mt-1">
+                    {filteredJobs.length} of {jobs.length} total jobs
+                    {categoryFilter !== 'all' && (
+                      <span className="ml-2 text-primary-red">
+                        (filtered by {categoryFilter})
+                      </span>
+                    )}
+                  </p>
+                </div>
               </div>
               
-              {/* User Filter Dropdown and Add Job Button - Only for Super Users */}
+              {/* Category Filter Dropdown and Add Job Button - Only for Super Users */}
               {isSuperUser && (
-                <div className="flex items-center gap-4">
-                  {users.length > 0 && (
-                    <div className="relative">
-                      <select
-                        value={userFilter}
-                        onChange={(e) => setUserFilter(e.target.value)}
-                        className="appearance-none bg-white border border-slate-300 rounded-lg px-4 py-2 pr-8 text-sm focus:outline-none focus:ring-2 focus:ring-primary-red focus:border-transparent"
-                      >
-                        <option value="all">All Users ({jobs.length} jobs)</option>
-                        {users.map((user) => {
-                          const userJobs = jobs.filter(job => 
-                            job.assignedUsers && job.assignedUsers.some(assignedUser => assignedUser.id === user.id)
-                          )
-                          return (
-                            <option key={user.id} value={user.id}>
-                              {user.full_name || 'Unnamed User'} ({userJobs.length} jobs)
-                            </option>
-                          )
-                        })}
-                      </select>
-                      <div className="absolute inset-y-0 right-0 flex items-center px-2 pointer-events-none">
-                        <svg className="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                        </svg>
-                      </div>
+                <div className="flex items-center justify-between">
+                  <div className="relative">
+                    <select
+                      value={categoryFilter}
+                      onChange={(e) => setCategoryFilter(e.target.value)}
+                      className="appearance-none bg-white border border-slate-300 rounded-lg px-4 py-2 pr-8 text-sm focus:outline-none focus:ring-2 focus:ring-primary-red focus:border-transparent"
+                    >
+                      <option value="all">All Categories ({jobs.length} jobs)</option>
+                      <option value="Windows">Windows ({jobs.filter(job => job.category === 'Windows').length} jobs)</option>
+                      <option value="Bathrooms">Bathrooms ({jobs.filter(job => job.category === 'Bathrooms').length} jobs)</option>
+                      <option value="Siding">Siding ({jobs.filter(job => job.category === 'Siding').length} jobs)</option>
+                      <option value="Doors">Doors ({jobs.filter(job => job.category === 'Doors').length} jobs)</option>
+                    </select>
+                    <div className="absolute inset-y-0 right-0 flex items-center px-2 pointer-events-none">
+                      <svg className="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                      </svg>
                     </div>
-                  )}
+                  </div>
                   
                   <button
                     onClick={() => setShowForm(!showForm)}
@@ -409,6 +480,22 @@ export default function JobsPage() {
                   onChange={(e) => setAddress(e.target.value)}
                   className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-red focus:border-transparent"
                 />
+              </div>
+              <div>
+                <label className="block text-sm font-normal text-slate-700 mb-2">
+                  Category
+                </label>
+                <select
+                  value={category}
+                  onChange={(e) => setCategory(e.target.value)}
+                  className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-red focus:border-transparent"
+                  required
+                >
+                  <option value="Windows">Windows</option>
+                  <option value="Bathrooms">Bathrooms</option>
+                  <option value="Siding">Siding</option>
+                  <option value="Doors">Doors</option>
+                </select>
               </div>
               <div>
                 <label className="block text-sm font-normal text-slate-700 mb-2">
@@ -536,7 +623,12 @@ export default function JobsPage() {
                       )}
                     </div>
                     <div className="flex-1 min-w-0">
-                      <h3 className="text-lg font-semibold text-slate-900 truncate">{job.job_name}</h3>
+                      <div className="flex items-center gap-2 mb-1">
+                        <h3 className="text-lg font-semibold text-slate-900 truncate">{job.job_name}</h3>
+                        <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-primary-red-light text-primary-red">
+                          {job.category}
+                        </span>
+                      </div>
                       <div className="mt-1">
                         {job.assignedUsers && job.assignedUsers.length > 0 ? (
                           <p className="text-slate-500 text-xs">Assigned to {job.assignedUsers.length} user{job.assignedUsers.length !== 1 ? 's' : ''}</p>

@@ -2,11 +2,10 @@
 
 import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import type { User } from '@supabase/supabase-js'
 import Link from 'next/link'
 import Image from 'next/image'
-import SuperAdminSidebar from '@/components/SuperAdminSidebar'
 
 // Force dynamic rendering to avoid static generation issues
 export const dynamic = 'force-dynamic'
@@ -18,6 +17,8 @@ export default function DashboardPage() {
   const [profile, setProfile] = useState<{ full_name: string | null; avatar_url: string | null } | null>(null)
   const router = useRouter()
   const supabase = createClient()
+  const dropdownRef = useRef<HTMLDivElement>(null)
+  const [showAccountDropdown, setShowAccountDropdown] = useState(false)
 
   const fetchProfileData = useCallback(async (userId: string) => {
     // Get profile data
@@ -57,6 +58,20 @@ export default function DashboardPage() {
     checkUser()
   }, [router, supabase, fetchProfileData])
 
+  // Handle clicks outside dropdown to close it
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setShowAccountDropdown(false)
+      }
+    }
+
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside)
+    }
+  }, [])
+
   const handleSignOut = async () => {
     await supabase.auth.signOut()
     router.push('/')
@@ -82,33 +97,99 @@ export default function DashboardPage() {
               />
             </div>
             <div className="flex items-center gap-3">
-              <Link href="/profile" className="flex items-center gap-2 hover:bg-slate-50 rounded-lg px-3 py-2 transition">
-                {profile?.avatar_url ? (
-                  <Image 
-                    src={profile.avatar_url} 
-                    alt="Profile" 
-                    width={32}
-                    height={32}
-                    className="w-8 h-8 rounded-full object-cover"
-                    unoptimized
-                  />
-                ) : (
-                  <div className="w-8 h-8 bg-primary-red-light rounded-full flex items-center justify-center">
-                    <svg className="w-5 h-5 text-primary-red" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-                    </svg>
+              {/* Desktop Account Dropdown */}
+              <div className="hidden md:block relative" ref={dropdownRef}>
+                <button
+                  onClick={() => setShowAccountDropdown(!showAccountDropdown)}
+                  className="flex items-center gap-2 hover:bg-slate-50 rounded-lg px-3 py-2 transition"
+                >
+                  {profile?.avatar_url ? (
+                    <Image 
+                      src={profile.avatar_url} 
+                      alt="Profile" 
+                      width={32}
+                      height={32}
+                      className="w-8 h-8 rounded-full object-cover"
+                      unoptimized
+                    />
+                  ) : (
+                    <div className="w-8 h-8 bg-primary-red-light rounded-full flex items-center justify-center">
+                      <svg className="w-5 h-5 text-primary-red" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                      </svg>
+                    </div>
+                  )}
+                  <span className="text-sm font-medium text-slate-700">
+                    {profile?.full_name || 'Name'}
+                  </span>
+                  <svg className="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                  </svg>
+                </button>
+                {showAccountDropdown && (
+                  <div className="absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg border border-slate-200 py-1 z-50">
+                    <Link href="/profile" className="block px-4 py-2 text-sm text-slate-700 hover:bg-slate-50">
+                      Profile
+                    </Link>
+                    <Link href="/settings" className="block px-4 py-2 text-sm text-slate-700 hover:bg-slate-50">
+                      Settings
+                    </Link>
+                    <button
+                      onClick={handleSignOut}
+                      className="block w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
+                    >
+                      Sign Out
+                    </button>
                   </div>
                 )}
-                <span className="text-sm font-medium text-slate-700">
-                  {profile?.full_name || 'Name'}
-                </span>
-              </Link>
-              <button
-                className="px-4 py-2 text-sm font-medium text-slate-700 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition"
-                onClick={handleSignOut}
-              >
-                Sign Out
-              </button>
+              </div>
+
+              {/* Mobile Account Dropdown */}
+              <div className="md:hidden relative" ref={dropdownRef}>
+                <button
+                  onClick={() => setShowAccountDropdown(!showAccountDropdown)}
+                  className="flex items-center gap-2 hover:bg-slate-50 rounded-lg px-3 py-2 transition"
+                >
+                  {profile?.avatar_url ? (
+                    <Image 
+                      src={profile.avatar_url} 
+                      alt="Profile" 
+                      width={32}
+                      height={32}
+                      className="w-8 h-8 rounded-full object-cover"
+                      unoptimized
+                    />
+                  ) : (
+                    <div className="w-8 h-8 bg-primary-red-light rounded-full flex items-center justify-center">
+                      <svg className="w-5 h-5 text-primary-red" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                      </svg>
+                    </div>
+                  )}
+                  <span className="text-sm font-medium text-slate-700">
+                    {profile?.full_name || 'Name'}
+                  </span>
+                  <svg className="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                  </svg>
+                </button>
+                {showAccountDropdown && (
+                  <div className="absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg border border-slate-200 py-1 z-50">
+                    <Link href="/profile" className="block px-4 py-2 text-sm text-slate-700 hover:bg-slate-50">
+                      Profile
+                    </Link>
+                    <Link href="/settings" className="block px-4 py-2 text-sm text-slate-700 hover:bg-slate-50">
+                      Settings
+                    </Link>
+                    <button
+                      onClick={handleSignOut}
+                      className="block w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
+                    >
+                      Sign Out
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </div>
@@ -117,13 +198,8 @@ export default function DashboardPage() {
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="flex gap-8">
-          {/* Super Admin Sidebar */}
-          {isSuperUser && (
-            <SuperAdminSidebar className="hidden lg:block fixed left-0 top-20 h-full w-64" />
-          )}
-
           {/* Main Content Area */}
-          <div className={`flex-1 ${isSuperUser ? 'lg:ml-64' : ''}`}>
+          <div className="flex-1">
         <div className="mb-8">
           <h2 className="text-3xl font-bold text-slate-900 mb-2">
             Welcome back{profile?.full_name ? `, ${profile.full_name.split(' ')[0]}` : ''}!
@@ -167,41 +243,24 @@ export default function DashboardPage() {
             </Link>
           )}
 
-          <div className="bg-white rounded-xl border border-slate-200 p-6 opacity-50">
-            <div className="flex items-center space-x-4">
-              <div className="w-12 h-12 bg-slate-100 rounded-lg flex items-center justify-center">
-                <svg className="w-6 h-6 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-                </svg>
-              </div>
-              <div>
-                <h3 className="text-lg font-semibold text-slate-900">Reports</h3>
-                <p className="text-slate-600 text-sm">Coming soon</p>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Admin Panel Link for Super Users */}
-        {isSuperUser && (
-          <div className="mt-8">
+          {isSuperUser && (
             <Link href="/admin">
-              <div className="bg-linear-to-r from-red-500 to-red-600 rounded-xl p-6 hover:shadow-lg transition cursor-pointer">
-                <div className="flex items-center space-x-4 text-white">
-                  <div className="w-12 h-12 bg-white/20 rounded-lg flex items-center justify-center">
-                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
+              <div className="bg-white rounded-xl border border-slate-200 p-6 hover:shadow-md transition cursor-pointer">
+                <div className="flex items-center space-x-4">
+                  <div className="w-12 h-12 bg-primary-red-light rounded-lg flex items-center justify-center">
+                    <svg className="w-6 h-6 text-primary-red" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197m13.5-9a2.5 2.5 0 11-5 0 2.5 2.5 0 015 0z" />
                     </svg>
                   </div>
                   <div>
-                    <h3 className="text-lg font-semibold">Admin Panel</h3>
-                    <p className="text-white/80 text-sm">Manage super user access</p>
+                    <h3 className="text-lg font-semibold text-slate-900">User Management</h3>
+                    <p className="text-slate-600 text-sm">Manage user roles and permissions</p>
                   </div>
                 </div>
               </div>
             </Link>
-          </div>
-        )}
+          )}
+        </div>
 
         {/* Notes Section */}
           {/* Notes Section removed */}

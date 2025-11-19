@@ -35,10 +35,8 @@
 
 - [x] Implement User Filter Sidebar for Super Users
 
-- [x] Ensure consistent use of custom color palette throughout the application
-- [x] Update typography to use Inter as primary font with proper weight guidelines (Headings: Bold/SemiBold, Body: Regular/Medium)
-- [x] Fix comment posting functionality by correcting database table references from 'job_notes' to 'notes'
-  - **COMPLETED**: Fixed Row Level Security (RLS) policies on notes table that were preventing users from viewing comments. Created simplified policies allowing job owners and super users to view/insert/update/delete notes. Added debugging logs to identify the issue, then cleaned up the code.
+- [x] Fix mobile photo upload button not opening camera
+  - **COMPLETED**: Fixed mobile "Add Photo" button by moving the hidden file input outside the conditional photo upload form so it's always available for the mobile button to click. The button now properly opens the camera app on mobile devices.
 - [x] Implement granular role-based access control system with specific roles (Rep, Brand Ambassador, Measure Tech, Installer) having different permissions for jobs and photos
   - **COMPLETED**: Database migration with roles, user_roles, and project_user_roles tables implemented. Frontend updated to use role-based logic instead of is_super_user boolean. RLS policies fixed to resolve infinite recursion, allowing super admins to view all jobs. Jobs page now displays jobs correctly for super users.
 - [x] Add the ability to assign multiple users to a job
@@ -103,7 +101,24 @@
   - **COMPLETED**: Identified that photo_tags table was missing CASCADE DELETE constraint, preventing job deletion when photos had tags. Added CASCADE DELETE to all foreign key constraints (job_assignments, job_photos, notes, photo_tags) and ensured super admin DELETE policy is properly configured. Job deletion now works for super admin users.
 - [x] Fix Vercel deployment TypeScript compilation errors
   - **COMPLETED**: Fixed TypeScript compilation errors by updating all profile property references from 'name' to 'full_name' throughout the codebase to match the database schema. Updated profile type definitions, property accesses, and database queries in src/app/jobs/page.tsx. Application now builds successfully without errors and deploys to Vercel.
-PROGRESS TRACKING:
+- [x] Add job categories (Windows, Bathrooms, Siding, Doors) to replace user-based filtering
+  - **COMPLETED**: Added category field to Job type definitions across all files. Updated job creation form to include category dropdown with the four specified categories. Replaced user-based filtering with category-based filtering in jobs page. Updated job cards to display category badges with appropriate colors. Created database migration file add_category_to_jobs.sql with proper constraints and index.
+- [x] Display job categories on job cards and job detail pages
+  - **COMPLETED**: Added category badges to job cards on jobs page with color-coded styling (Windows=blue, Bathrooms=green, Siding=yellow, Doors=purple). Added category display to job detail page header for both mobile and desktop layouts. All category displays use consistent styling and only show when category is present.
+- [x] Create database migration for category column
+  - **COMPLETED**: Created add_category_to_jobs.sql migration file that adds category column to jobs table with TEXT type, CHECK constraint limiting to the four categories, and CREATE INDEX for performance. Migration is ready to be executed on Supabase database.
+- [x] Implement category editing functionality on individual job pages
+  - **COMPLETED**: Added category editing functionality to job detail pages for super admin users. Includes edit state management, dropdown selector with the four categories, save/cancel buttons, and proper UI integration for both mobile and desktop layouts. Category can now be set during job creation and edited on individual job pages.
+- [x] Fix mobile photo saving issue where photos taken on mobile weren't being saved to database
+  - **COMPLETED**: Resolved the issue where mobile photo uploads were not persisting to the database despite the camera opening correctly. The handlePhotoUpload function was already properly implemented with image resizing, geolocation capture, Supabase storage upload, and database insertion. The fix involved ensuring proper database permissions and execution flow, allowing photos to save successfully after being taken on mobile devices.
+- [x] Add category filter to gallery page for photos
+  - **COMPLETED**: Added category filtering functionality to the gallery page. Updated photo fetching query to include job category, added category filter state and UI buttons with counts, implemented dual filtering (photo type + category), and displayed category badges on photo cards and modal with color coding (Windows=blue, Bathrooms=green, Siding=yellow, Doors=purple). Application compiles successfully.
+- [x] Fix gallery page logout issue caused by excessive API calls
+  - **COMPLETED**: Optimized gallery page to prevent frequent logouts by reducing API calls from individual profile requests to a single batch fetch, removed automatic redirects on errors that could cause logout loops, and improved error handling. Gallery now loads efficiently without exhausting auth tokens.
+- [x] Fix gallery page flickering/infinite loading issue
+  - **COMPLETED**: Resolved circular dependency in useEffect that was causing infinite re-renders. Removed fetchAllPhotos from useEffect dependencies and simplified the callback to prevent flickering. Memoized filteredPhotos calculation for better performance. Gallery page now loads smoothly without flickering.
+- [x] Implement documents section for job detail pages with upload, view, edit, and delete functionality for PDFs and other file types
+  - **COMPLETED**: Added comprehensive documents section to job detail pages with file upload (PDF, Word, Excel, etc.), inline viewing modal with iframe for PDFs, download functionality, and delete capability for super admins. Includes proper file type icons, size formatting, and uploader information display. Application compiles successfully.
 - If any tools are available to manage the above todo list, use it to track progress through this checklist.
 - After completing each step, mark it complete and add a summary.
 - Read current todo list status before starting each new step.

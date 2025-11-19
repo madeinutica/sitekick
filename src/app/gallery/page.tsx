@@ -1,13 +1,12 @@
 'use client'
 
 import { createClient } from '@/lib/supabase/client'
-import { useRouter } from 'next/navigation'
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useMemo } from 'react'
 import type { User } from '@supabase/supabase-js'
 import Link from 'next/link'
 import Image from 'next/image'
 
-type RawJobPhoto = {
+type PhotoData = {
   id: number
   user_id: string
   image_url: string
@@ -17,13 +16,19 @@ type RawJobPhoto = {
   latitude?: number
   longitude?: number
   job_id: number
-  jobs?: { job_name: string }
-  profiles?: { avatar_url?: string }
+  jobs?: { job_name: string; category?: string }
 }
 
-type JobPhoto = RawJobPhoto & {
+type ProfileData = {
+  id: string
+  full_name: string | null
+  avatar_url: string | null
+}
+
+type JobPhoto = PhotoData & {
   job_name?: string
-  uploader_avatar?: string
+  job_category?: string
+  uploader_avatar?: string | null
 }
 
 export default function GalleryPage() {
@@ -33,77 +38,97 @@ export default function GalleryPage() {
   const [selectedPhoto, setSelectedPhoto] = useState<JobPhoto | null>(null)
   const [showPhotoModal, setShowPhotoModal] = useState(false)
   const [filterType, setFilterType] = useState<string>('all')
+  const [categoryFilter, setCategoryFilter] = useState<string>('all')
   const [userRoles, setUserRoles] = useState<string[]>([])
 
-  const router = useRouter()
   const supabase = createClient()
 
-  const filteredPhotos = filterType === 'all'
-    ? photos
-    : photos.filter(photo => photo.photo_type === filterType)
+  const filteredPhotos = useMemo(() => {
+    return photos
+      .filter(photo => filterType === 'all' || photo.photo_type === filterType)
+      .filter(photo => categoryFilter === 'all' || photo.job_category === categoryFilter)
+  }, [photos, filterType, categoryFilter])
 
   const fetchAllPhotos = useCallback(async () => {
-    if (!user) return
+    try {
+      setLoading(true)
+      
+      // Single optimized query instead of multiple calls
+      const { data: photosData, error: photosError } = await supabase
+        .from('job_photos')
+        .select(`
+          *,
+          jobs(job_name, category)
+        `)
+        .order('created_at', { ascending: false })
 
-    // Fetch all photos from accessible jobs (RLS policy handles access control)
-    const { data: photosData, error: photosError } = await supabase
-      .from('job_photos')
-      .select(`
-        *,
-        jobs(job_name)
-      `)
-      .order('created_at', { ascending: false })
-
-    if (photosError) {
-      console.error('Error fetching photos:', photosError)
-      return
-    }
-
-    // Fetch uploader profiles separately
-    const photosWithProfiles = await Promise.all(
-      (photosData || []).map(async (photo: RawJobPhoto & { jobs?: { job_name: string } }) => {
-        const { data: profileData } = await supabase
-          .from('profiles')
-          .select('avatar_url')
-          .eq('id', photo.user_id)
-          .single()
-
-        return {
-          ...photo,
-          job_name: photo.jobs?.job_name,
-          uploader_avatar: profileData?.avatar_url
-        }
-      })
-    )
-
-    setPhotos(photosWithProfiles)
-  }, [supabase, user])
-
-  useEffect(() => {
-    const checkUser = async () => {
-      const { data } = await supabase.auth.getUser()
-      if (!data.user) {
-        router.push('/login')
+      if (photosError) {
+        console.error('Error fetching photos:', photosError)
+        // Don't redirect on error - just show empty state
         return
       }
 
-      setUser(data.user)
+      // Batch fetch all user profiles at once
+      const userIds = [...new Set(photosData?.map((p: PhotoData) => p.user_id) || [])]
+      const { data: profilesData } = await supabase
+        .from('profiles')
+        .select('id, full_name, avatar_url')
+        .in('id', userIds)
 
-      // Get user roles
-      const { data: userRolesData } = await supabase
-        .from('user_roles')
-        .select('roles(name)')
-        .eq('user_id', data.user.id)
-      
-      const roles = (userRolesData as unknown as { roles: { name: string } }[])?.map(ur => ur.roles?.name).filter(Boolean) || []
-      setUserRoles(roles)
+      // Create profile lookup map
+      const profileMap = new Map(profilesData?.map((p: ProfileData) => [p.id, p]) || [])
 
-      await fetchAllPhotos()
+      // Combine data efficiently without additional API calls
+      const photosWithProfiles = photosData?.map((photo: PhotoData) => {
+        const profile = profileMap.get(photo.user_id) as ProfileData | undefined
+        return {
+          ...photo,
+          job_name: photo.jobs?.job_name,
+          job_category: photo.jobs?.category,
+          uploader_avatar: profile?.avatar_url || null
+        }
+      }) || []
+
+      setPhotos(photosWithProfiles)
+    } catch (error) {
+      console.error('Error in fetchAllPhotos:', error)
+      // Don't redirect on error
+    } finally {
       setLoading(false)
+    }
+  }, [supabase])
+
+  useEffect(() => {
+    const checkUser = async () => {
+      try {
+        const { data } = await supabase.auth.getUser()
+        if (!data.user) {
+          // Don't redirect immediately - let auth state handle it
+          return
+        }
+
+        setUser(data.user)
+
+        // Get user roles
+        const { data: userRolesData } = await supabase
+          .from('user_roles')
+          .select('roles(name)')
+          .eq('user_id', data.user.id)
+        
+        const roles = (userRolesData as unknown as { roles: { name: string } }[])?.map(ur => ur.roles?.name).filter(Boolean) || []
+        setUserRoles(roles)
+
+        await fetchAllPhotos()
+      } catch (error) {
+        console.error('Error in checkUser:', error)
+        // Don't redirect on error
+      } finally {
+        setLoading(false)
+      }
     }
 
     checkUser()
-  }, [router, supabase, fetchAllPhotos])
+  }, [supabase, fetchAllPhotos])
 
   if (loading) {
     return (
@@ -157,34 +182,68 @@ export default function GalleryPage() {
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {/* Filter Tabs */}
         {photos.length > 0 && (
-          <div className="flex flex-wrap gap-2 mb-6">
-            <button
-              onClick={() => setFilterType('all')}
-              className={`px-4 py-2 rounded-lg font-semibold transition ${
-                filterType === 'all'
-                  ? 'bg-indigo-600 text-white'
-                  : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-              }`}
-            >
-              All ({photos.length})
-            </button>
-            {['before', 'after', 'progress', 'issue', 'completed'].map(type => {
-              const count = photos.filter(p => p.photo_type === type).length
-              if (count === 0) return null
-              return (
-                <button
-                  key={type}
-                  onClick={() => setFilterType(type)}
-                  className={`px-4 py-2 rounded-lg font-semibold transition capitalize ${
-                    filterType === type
-                      ? 'bg-indigo-600 text-white'
-                      : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-                  }`}
-                >
-                  {type} ({count})
-                </button>
-              )
-            })}
+          <div className="space-y-4 mb-6">
+            {/* Photo Type Filter */}
+            <div className="flex flex-wrap gap-2">
+              <button
+                onClick={() => setFilterType('all')}
+                className={`px-4 py-2 rounded-lg font-semibold transition ${
+                  filterType === 'all'
+                    ? 'bg-indigo-600 text-white'
+                    : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                }`}
+              >
+                All Photos ({photos.length})
+              </button>
+              {['before', 'after', 'progress', 'issue', 'completed'].map(type => {
+                const count = photos.filter(p => p.photo_type === type).length
+                if (count === 0) return null
+                return (
+                  <button
+                    key={type}
+                    onClick={() => setFilterType(type)}
+                    className={`px-4 py-2 rounded-lg font-semibold transition capitalize ${
+                      filterType === type
+                        ? 'bg-indigo-600 text-white'
+                        : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                    }`}
+                  >
+                    {type} ({count})
+                  </button>
+                )
+              })}
+            </div>
+
+            {/* Category Filter */}
+            <div className="flex flex-wrap gap-2">
+              <button
+                onClick={() => setCategoryFilter('all')}
+                className={`px-4 py-2 rounded-lg font-semibold transition ${
+                  categoryFilter === 'all'
+                    ? 'bg-green-600 text-white'
+                    : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                }`}
+              >
+                All Categories ({photos.length})
+              </button>
+              {['Windows', 'Bathrooms', 'Siding', 'Doors'].map(category => {
+                const count = photos.filter(p => p.job_category === category).length
+                if (count === 0) return null
+                return (
+                  <button
+                    key={category}
+                    onClick={() => setCategoryFilter(category)}
+                    className={`px-4 py-2 rounded-lg font-semibold transition ${
+                      categoryFilter === category
+                        ? 'bg-green-600 text-white'
+                        : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                    }`}
+                  >
+                    {category} ({count})
+                  </button>
+                )
+              })}
+            </div>
           </div>
         )}
 
@@ -223,6 +282,17 @@ export default function GalleryPage() {
                     {photo.job_name && (
                       <span className="px-2 py-1 text-xs font-semibold rounded-full bg-indigo-500 text-white">
                         {photo.job_name}
+                      </span>
+                    )}
+                    {photo.job_category && (
+                      <span className={`px-2 py-1 text-xs font-semibold rounded-full ${
+                        photo.job_category === 'Windows' ? 'bg-blue-600 text-white' :
+                        photo.job_category === 'Bathrooms' ? 'bg-green-600 text-white' :
+                        photo.job_category === 'Siding' ? 'bg-yellow-600 text-white' :
+                        photo.job_category === 'Doors' ? 'bg-purple-600 text-white' :
+                        'bg-slate-600 text-white'
+                      }`}>
+                        {photo.job_category}
                       </span>
                     )}
                   </div>
@@ -358,6 +428,17 @@ export default function GalleryPage() {
                   {selectedPhoto.job_name && (
                     <span className="px-3 py-1 text-sm font-semibold rounded-full bg-indigo-500 text-white">
                       {selectedPhoto.job_name}
+                    </span>
+                  )}
+                  {selectedPhoto.job_category && (
+                    <span className={`px-3 py-1 text-sm font-semibold rounded-full ${
+                      selectedPhoto.job_category === 'Windows' ? 'bg-blue-600 text-white' :
+                      selectedPhoto.job_category === 'Bathrooms' ? 'bg-green-600 text-white' :
+                      selectedPhoto.job_category === 'Siding' ? 'bg-yellow-600 text-white' :
+                      selectedPhoto.job_category === 'Doors' ? 'bg-purple-600 text-white' :
+                      'bg-slate-600 text-white'
+                    }`}>
+                      {selectedPhoto.job_category}
                     </span>
                   )}
                 </div>
