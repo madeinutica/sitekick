@@ -189,16 +189,16 @@ export default function JobsPage() {
   // Handle clicks outside dropdown to close it
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node) && showAccountDropdown) {
         setShowAccountDropdown(false)
       }
     }
 
-    document.addEventListener('mousedown', handleClickOutside)
+    document.addEventListener('click', handleClickOutside)
     return () => {
-      document.removeEventListener('mousedown', handleClickOutside)
+      document.removeEventListener('click', handleClickOutside)
     }
-  }, [])
+  }, [showAccountDropdown])
 
   const handleAddJob = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
@@ -329,14 +329,18 @@ export default function JobsPage() {
                 </button>
                 {showAccountDropdown && (
                   <div className="absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg border border-slate-200 py-1 z-50">
-                    <Link href="/profile" className="block px-4 py-2 text-sm text-slate-700 hover:bg-slate-50">
+                    <Link href="/profile" onClick={() => setShowAccountDropdown(false)} className="block px-4 py-2 text-sm text-slate-700 hover:bg-slate-50">
                       Profile
                     </Link>
-                    <Link href="/settings" className="block px-4 py-2 text-sm text-slate-700 hover:bg-slate-50">
+                    <Link href="/settings" onClick={() => setShowAccountDropdown(false)} className="block px-4 py-2 text-sm text-slate-700 hover:bg-slate-50">
                       Settings
                     </Link>
                     <button
-                      onClick={handleSignOut}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        setShowAccountDropdown(false)
+                        handleSignOut()
+                      }}
                       className="block w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
                     >
                       Sign Out
@@ -375,14 +379,18 @@ export default function JobsPage() {
                 </button>
                 {showAccountDropdown && (
                   <div className="absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg border border-slate-200 py-1 z-50">
-                    <Link href="/profile" className="block px-4 py-2 text-sm text-slate-700 hover:bg-slate-50">
+                    <Link href="/profile" onClick={() => setShowAccountDropdown(false)} className="block px-4 py-2 text-sm text-slate-700 hover:bg-slate-50">
                       Profile
                     </Link>
-                    <Link href="/settings" className="block px-4 py-2 text-sm text-slate-700 hover:bg-slate-50">
+                    <Link href="/settings" onClick={() => setShowAccountDropdown(false)} className="block px-4 py-2 text-sm text-slate-700 hover:bg-slate-50">
                       Settings
                     </Link>
                     <button
-                      onClick={handleSignOut}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        setShowAccountDropdown(false)
+                        handleSignOut()
+                      }}
                       className="block w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
                     >
                       Sign Out

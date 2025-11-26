@@ -119,6 +119,8 @@
   - **COMPLETED**: Resolved circular dependency in useEffect that was causing infinite re-renders. Removed fetchAllPhotos from useEffect dependencies and simplified the callback to prevent flickering. Memoized filteredPhotos calculation for better performance. Gallery page now loads smoothly without flickering.
 - [x] Implement documents section for job detail pages with upload, view, edit, and delete functionality for PDFs and other file types
   - **COMPLETED**: Added comprehensive documents section to job detail pages with file upload (PDF, Word, Excel, etc.), inline viewing modal with iframe for PDFs, download functionality, and delete capability for super admins. Includes proper file type icons, size formatting, and uploader information display. Application compiles successfully.
+- [x] Fix 400 error when viewing uploaded documents by replacing getPublicUrl with createSignedUrl for private bucket access
+  - **COMPLETED**: Fixed the 400 Bad Request error when viewing PDFs by replacing getPublicUrl() with createSignedUrl() for private bucket access. Updated getDocumentUrl function to be async and return signed URLs with 1-hour expiry. Modified modal to fetch URL when opening and store in state. All download buttons and iframe now use proper signed URLs. Application builds successfully without errors.
 - If any tools are available to manage the above todo list, use it to track progress through this checklist.
 - After completing each step, mark it complete and add a summary.
 - Read current todo list status before starting each new step.

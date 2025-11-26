@@ -2,22 +2,28 @@ const { createClient } = require('@supabase/supabase-js');
 const fs = require('fs');
 const path = require('path');
 
+// Load environment variables from .env.local
+require('dotenv').config({ path: path.join(__dirname, '.env.local') });
+
 async function runSQL() {
+  const sqlFile = process.argv[2] || 'add_job_documents.sql';
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
   if (!supabaseUrl || !supabaseKey) {
     console.error('Missing Supabase environment variables');
+    console.error('NEXT_PUBLIC_SUPABASE_URL:', supabaseUrl ? 'present' : 'missing');
+    console.error('SUPABASE_SERVICE_ROLE_KEY:', process.env.SUPABASE_SERVICE_ROLE_KEY ? 'present' : 'missing');
     process.exit(1);
   }
 
   const supabase = createClient(supabaseUrl, supabaseKey);
 
   try {
-    const sqlPath = path.join(__dirname, 'simple_jobs_fix.sql');
+    const sqlPath = path.join(__dirname, sqlFile);
     const sql = fs.readFileSync(sqlPath, 'utf8');
 
-    console.log('Running SQL migration...');
+    console.log(`Running SQL migration from ${sqlFile}...`);
 
     // Split SQL into individual statements
     const statements = sql

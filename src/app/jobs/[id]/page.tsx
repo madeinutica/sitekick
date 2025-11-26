@@ -297,7 +297,7 @@ type JobPhoto = {
 type JobDocument = {
   id: number
   file_name: string
-  file_url: string
+  file_path: string
   file_type: string
   file_size: number
   uploaded_by: string
@@ -339,6 +339,7 @@ export default function JobDetailPage() {
   const [selectedDocument, setSelectedDocument] = useState<JobDocument | null>(null)
   const [showDocumentModal, setShowDocumentModal] = useState(false)
   const [documentFileInputRef, setDocumentFileInputRef] = useState<HTMLInputElement | null>(null)
+  const [documentUrl, setDocumentUrl] = useState<string | null>(null)
   
   const router = useRouter()
   const params = useParams()
@@ -758,20 +759,17 @@ export default function JobDetailPage() {
     try {
       // Upload to storage
       const { error: uploadError } = await supabase.storage
-        .from('job_documents')
+        .from('job-documents')
         .upload(fileName, file)
 
       if (uploadError) {
         throw new Error(`Upload failed: ${uploadError.message}`)
       }
 
-      const { data: { publicUrl } } = supabase.storage.from('job_documents').getPublicUrl(fileName)
-
-      // Insert to database
       const { error: insertError } = await supabase.from('job_documents').insert({
         job_id: job.id,
         file_name: file.name,
-        file_url: publicUrl,
+        file_path: fileName,
         file_type: file.type,
         file_size: file.size,
         uploaded_by: user.id
@@ -811,6 +809,19 @@ export default function JobDetailPage() {
     } else {
       fetchDocuments()
     }
+  }
+
+  const getDocumentUrl = async (filePath: string) => {
+    const { data, error } = await supabase.storage
+      .from('job-documents')
+      .createSignedUrl(filePath, 3600) // 1 hour expiry
+
+    if (error) {
+      console.error('Error creating signed URL:', error)
+      return null
+    }
+
+    return data.signedUrl
   }
 
   const formatFileSize = (bytes: number) => {
@@ -2196,8 +2207,10 @@ export default function JobDetailPage() {
                   {/* Actions */}
                   <div className="flex items-center gap-2">
                     <button
-                      onClick={() => {
+                      onClick={async () => {
                         setSelectedDocument(document)
+                        const url = await getDocumentUrl(document.file_path)
+                        setDocumentUrl(url)
                         setShowDocumentModal(true)
                       }}
                       className="px-3 py-1 text-sm bg-slate-100 text-slate-700 rounded hover:bg-slate-200 transition"
@@ -2205,11 +2218,14 @@ export default function JobDetailPage() {
                       View
                     </button>
                     <button
-                      onClick={() => {
-                        const link = window.document.createElement('a')
-                        link.href = document.file_url
-                        link.download = document.file_name
-                        link.click()
+                      onClick={async () => {
+                        const url = await getDocumentUrl(document.file_path)
+                        if (url) {
+                          const link = window.document.createElement('a')
+                          link.href = url
+                          link.download = document.file_name
+                          link.click()
+                        }
                       }}
                       className="px-3 py-1 text-sm bg-indigo-600 text-white rounded hover:bg-indigo-700 transition"
                     >
@@ -2386,10 +2402,16 @@ export default function JobDetailPage() {
 
       {/* Document Modal */}
       {showDocumentModal && selectedDocument ? (
-        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4" onClick={() => setShowDocumentModal(false)}>
+        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4" onClick={() => {
+          setShowDocumentModal(false)
+          setDocumentUrl(null)
+        }}>
           <div className="relative max-w-4xl max-h-full bg-white rounded-lg overflow-hidden" onClick={(e) => e.stopPropagation()}>
             <button
-              onClick={() => setShowDocumentModal(false)}
+              onClick={() => {
+                setShowDocumentModal(false)
+                setDocumentUrl(null)
+              }}
               className="absolute top-4 right-4 z-10 w-10 h-10 bg-black bg-opacity-50 text-white rounded-full flex items-center justify-center hover:bg-opacity-70 transition"
             >
               <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -2409,10 +2431,12 @@ export default function JobDetailPage() {
                 <div className="flex gap-2">
                   <button
                     onClick={() => {
-                      const link = window.document.createElement('a')
-                      link.href = selectedDocument.file_url
-                      link.download = selectedDocument.file_name
-                      link.click()
+                      if (documentUrl) {
+                        const link = window.document.createElement('a')
+                        link.href = documentUrl
+                        link.download = selectedDocument.file_name
+                        link.click()
+                      }
                     }}
                     className="px-3 py-1 text-sm bg-indigo-600 text-white rounded hover:bg-indigo-700 transition"
                   >
@@ -2426,7 +2450,7 @@ export default function JobDetailPage() {
             <div className="relative w-full h-[80vh] bg-slate-100">
               {selectedDocument.file_type.includes('pdf') ? (
                 <iframe
-                  src={selectedDocument.file_url}
+                  src={documentUrl || undefined}
                   className="w-full h-full"
                   title={selectedDocument.file_name}
                 />
@@ -2442,10 +2466,12 @@ export default function JobDetailPage() {
                     <p className="text-slate-600 mb-4">This file type cannot be previewed in the browser</p>
                     <button
                       onClick={() => {
-                        const link = window.document.createElement('a')
-                        link.href = selectedDocument.file_url
-                        link.download = selectedDocument.file_name
-                        link.click()
+                        if (documentUrl) {
+                          const link = window.document.createElement('a')
+                          link.href = documentUrl
+                          link.download = selectedDocument.file_name
+                          link.click()
+                        }
                       }}
                       className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition"
                     >
