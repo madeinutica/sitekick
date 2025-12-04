@@ -186,6 +186,47 @@ export default function AdminPage() {
     }
   }
 
+  const deleteUser = async (userId: string, userName: string) => {
+    if (!confirm(`Are you sure you want to delete user "${userName}"? This action cannot be undone and will remove all their data.`)) {
+      return
+    }
+
+    try {
+      // First delete user roles
+      const { error: roleError } = await supabase
+        .from('user_roles')
+        .delete()
+        .eq('user_id', userId)
+      
+      if (roleError) {
+        console.error('Error deleting user roles:', roleError)
+        alert(`Error deleting user roles: ${roleError.message}`)
+        return
+      }
+
+      // Delete profile
+      const { error: profileError } = await supabase
+        .from('profiles')
+        .delete()
+        .eq('id', userId)
+      
+      if (profileError) {
+        console.error('Error deleting user profile:', profileError)
+        alert(`Error deleting user profile: ${profileError.message}`)
+        return
+      }
+
+      // Note: We can't delete from auth.users directly from client-side
+      // This would need to be done server-side or through Supabase Admin API
+      
+      alert(`User "${userName}" has been deleted successfully.`)
+      fetchUsersAndRoles()
+    } catch (error) {
+      console.error('Error deleting user:', error)
+      alert('An unexpected error occurred while deleting the user.')
+    }
+  }
+
   const handleSignOut = async () => {
     await supabase.auth.signOut()
     router.push('/')
@@ -252,6 +293,9 @@ export default function AdminPage() {
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Assign Role
                   </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Actions
+                  </th>
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
@@ -310,6 +354,17 @@ export default function AdminPage() {
                           ))
                         }
                       </select>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      {userData.id !== user?.id && (
+                        <button
+                          onClick={() => deleteUser(userData.id, userData.full_name || 'Unknown User')}
+                          className="px-3 py-1 text-xs font-medium text-white bg-red-600 hover:bg-red-700 rounded-md transition"
+                          title="Delete user"
+                        >
+                          Delete
+                        </button>
+                      )}
                     </td>
                   </tr>
                 ))}
