@@ -52,6 +52,7 @@ export default function JobsPage() {
   const supabase = createClient()
   const dropdownRef = useRef<HTMLDivElement>(null)
   const [showAccountDropdown, setShowAccountDropdown] = useState(false)
+  const [loading, setLoading] = useState(true)
 
   // Filter jobs based on selected category, status, and search query
   const filteredJobs = jobs.filter(job => {
@@ -77,6 +78,8 @@ export default function JobsPage() {
 
     const roles = (userRolesData as unknown as { roles: { name: string } }[])?.map(ur => ur.roles?.name).filter(Boolean) || []
     const isSuperUser = roles.includes('super_admin')
+
+    setLoading(true)
 
     let query = supabase
       .from('jobs')
@@ -163,6 +166,7 @@ export default function JobsPage() {
         setJobs([])
       }
     }
+    setLoading(false)
   }, [supabase])
 
   useEffect(() => {
@@ -665,100 +669,107 @@ export default function JobsPage() {
             )}
 
             {/* Jobs List */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {filteredJobs.map((job) => (
-                <div key={job.id} className="relative group">
-                  <Link href={`/jobs/${job.id}`}>
-                    <div className="bg-white rounded-xl border border-slate-200 p-6 hover:shadow-md transition cursor-pointer relative">
-                      <div className="flex items-start space-x-4">
-                        {/* Assigned Users Avatars or Default Icon */}
-                        <div className="w-12 h-12 shrink-0">
-                          {job.assignedUsers && job.assignedUsers.length > 0 ? (
-                            <div className="flex -space-x-1">
-                              {job.assignedUsers.slice(0, 3).map((assignedUser) => (
-                                <div key={assignedUser.id} className="relative">
-                                  {assignedUser.avatar_url ? (
-                                    <Image
-                                      src={assignedUser.avatar_url}
-                                      alt={assignedUser.full_name || 'User'}
-                                      width={32}
-                                      height={32}
-                                      className="w-8 h-8 rounded-full border-2 border-white object-cover"
-                                    />
-                                  ) : (
-                                    <div className="w-8 h-8 bg-primary-red-light rounded-full border-2 border-white flex items-center justify-center">
-                                      <svg className="w-4 h-4 text-primary-red" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-                                      </svg>
-                                    </div>
-                                  )}
-                                </div>
-                              ))}
-                              {job.assignedUsers.length > 3 && (
-                                <div className="w-8 h-8 bg-slate-200 rounded-full border-2 border-white flex items-center justify-center">
-                                  <span className="text-xs font-medium text-slate-600">+{job.assignedUsers.length - 3}</span>
-                                </div>
+            {loading ? (
+              <div className="flex flex-col items-center justify-center py-20">
+                <div className="w-12 h-12 border-4 border-primary-red border-t-transparent rounded-full animate-spin"></div>
+                <p className="text-slate-500 mt-4 font-medium italic">Loading your jobs...</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {filteredJobs.map((job) => (
+                  <div key={job.id} className="relative group">
+                    <Link href={`/jobs/${job.id}`}>
+                      <div className="bg-white rounded-xl border border-slate-200 p-6 hover:shadow-md transition cursor-pointer relative">
+                        <div className="flex items-start space-x-4">
+                          {/* Assigned Users Avatars or Default Icon */}
+                          <div className="w-12 h-12 shrink-0">
+                            {job.assignedUsers && job.assignedUsers.length > 0 ? (
+                              <div className="flex -space-x-1">
+                                {job.assignedUsers.slice(0, 3).map((assignedUser) => (
+                                  <div key={assignedUser.id} className="relative">
+                                    {assignedUser.avatar_url ? (
+                                      <Image
+                                        src={assignedUser.avatar_url}
+                                        alt={assignedUser.full_name || 'User'}
+                                        width={32}
+                                        height={32}
+                                        className="w-8 h-8 rounded-full border-2 border-white object-cover"
+                                      />
+                                    ) : (
+                                      <div className="w-8 h-8 bg-primary-red-light rounded-full border-2 border-white flex items-center justify-center">
+                                        <svg className="w-4 h-4 text-primary-red" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                                        </svg>
+                                      </div>
+                                    )}
+                                  </div>
+                                ))}
+                                {job.assignedUsers.length > 3 && (
+                                  <div className="w-8 h-8 bg-slate-200 rounded-full border-2 border-white flex items-center justify-center">
+                                    <span className="text-xs font-medium text-slate-600">+{job.assignedUsers.length - 3}</span>
+                                  </div>
+                                )}
+                              </div>
+                            ) : (
+                              <div className="w-12 h-12 bg-primary-red-light rounded-lg flex items-center justify-center">
+                                <svg className="w-6 h-6 text-primary-red" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                                </svg>
+                              </div>
+                            )}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 mb-1 flex-wrap">
+                              <h3 className="text-lg font-semibold text-slate-900 truncate">{cleanJobName(job.job_name)}</h3>
+                              <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-primary-red-light text-primary-red">
+                                {job.category}
+                              </span>
+                              {job.status && (
+                                <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${['installed', 'completed', 'closed'].includes(job.status.toLowerCase())
+                                  ? 'bg-green-100 text-green-700'
+                                  : 'bg-amber-100 text-amber-700'
+                                  }`}>
+                                  {job.status}
+                                </span>
                               )}
                             </div>
-                          ) : (
-                            <div className="w-12 h-12 bg-primary-red-light rounded-lg flex items-center justify-center">
-                              <svg className="w-6 h-6 text-primary-red" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                              </svg>
+                            <div className="mt-1">
+                              {job.assignedUsers && job.assignedUsers.length > 0 ? (
+                                <p className="text-slate-500 text-xs">Assigned to {job.assignedUsers.length} user{job.assignedUsers.length !== 1 ? 's' : ''}</p>
+                              ) : (
+                                <p className="text-slate-500 text-xs">Created by: {job.profiles?.full_name || 'Unknown'}</p>
+                              )}
                             </div>
-                          )}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2 mb-1 flex-wrap">
-                            <h3 className="text-lg font-semibold text-slate-900 truncate">{cleanJobName(job.job_name)}</h3>
-                            <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-primary-red-light text-primary-red">
-                              {job.category}
-                            </span>
-                            {job.status && (
-                              <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${['installed', 'completed', 'closed'].includes(job.status.toLowerCase())
-                                ? 'bg-green-100 text-green-700'
-                                : 'bg-amber-100 text-amber-700'
-                                }`}>
-                                {job.status}
-                              </span>
+                            {job.address && (
+                              <p className="text-slate-600 text-sm mt-1 truncate">{job.address}</p>
+                            )}
+                            {job.installation_info && (
+                              <p className="text-slate-500 text-xs mt-2 line-clamp-2">{job.installation_info}</p>
                             )}
                           </div>
-                          <div className="mt-1">
-                            {job.assignedUsers && job.assignedUsers.length > 0 ? (
-                              <p className="text-slate-500 text-xs">Assigned to {job.assignedUsers.length} user{job.assignedUsers.length !== 1 ? 's' : ''}</p>
-                            ) : (
-                              <p className="text-slate-500 text-xs">Created by: {job.profiles?.full_name || 'Unknown'}</p>
-                            )}
-                          </div>
-                          {job.address && (
-                            <p className="text-slate-600 text-sm mt-1 truncate">{job.address}</p>
-                          )}
-                          {job.installation_info && (
-                            <p className="text-slate-500 text-xs mt-2 line-clamp-2">{job.installation_info}</p>
-                          )}
+                          <svg className="w-5 h-5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                          </svg>
                         </div>
-                        <svg className="w-5 h-5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                        </svg>
                       </div>
-                    </div>
-                  </Link>
-                  {isSuperUser && (
-                    <button
-                      onClick={(e) => handleDeleteJob(job.id, e)}
-                      className="absolute top-2 right-2 w-8 h-8 bg-primary-red text-white rounded-lg opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center hover:bg-primary-red-dark"
-                      title="Delete job"
-                    >
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                      </svg>
-                    </button>
-                  )}
-                </div>
-              ))}
-            </div>
+                    </Link>
+                    {isSuperUser && (
+                      <button
+                        onClick={(e) => handleDeleteJob(job.id, e)}
+                        className="absolute top-2 right-2 w-8 h-8 bg-primary-red text-white rounded-lg opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center hover:bg-primary-red-dark"
+                        title="Delete job"
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                        </svg>
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
 
-            {filteredJobs.length === 0 && !showForm && isSuperUser && (
+            {!loading && filteredJobs.length === 0 && !showForm && isSuperUser && (
               <div className="text-center py-12">
                 <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-4">
                   <svg className="w-8 h-8 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -776,7 +787,7 @@ export default function JobsPage() {
               </div>
             )}
 
-            {filteredJobs.length === 0 && !showForm && !isSuperUser && (
+            {!loading && filteredJobs.length === 0 && !showForm && !isSuperUser && (
               <div className="text-center py-12">
                 <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-4">
                   <svg className="w-8 h-8 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
