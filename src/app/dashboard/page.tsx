@@ -92,14 +92,26 @@ export default function DashboardPage() {
       .order('created_at', { ascending: false })
       .limit(50)
 
-    // RLS handles the permissions. 
-    // We filter by company_id for non-global admins for extra safety/performance.
+    // RLS handles the permissions, but we filter for efficiency
     if (!isGlobalAdmin) {
+      // First, get all job IDs the user is assigned to
+      const { data: assignments } = await supabase
+        .from('job_assignments')
+        .select('job_id')
+        .eq('user_id', userId)
+
+      const assignedIds = assignments?.map((a: { job_id: number }) => a.job_id) || []
+
+      // Build the OR filter: Company match OR Assigned match OR Creator match
+      let orFilter = `user_id.eq.${userId}`
       if (companyId) {
-        query = query.eq('company_id', companyId)
-      } else {
-        query = query.eq('user_id', userId)
+        orFilter = `company_id.eq.${companyId},${orFilter}`
       }
+      if (assignedIds.length > 0) {
+        orFilter = `${orFilter},id.in.(${assignedIds.join(',')})`
+      }
+
+      query = query.or(orFilter)
     }
 
     const { data: jobsData, error: jobsError } = await query
