@@ -70,14 +70,22 @@ export default function JobsPage() {
   })
 
   const fetchJobs = useCallback(async (userId: string) => {
-    // Get user roles first
+    // Get user roles and company_id
+    const { data: profileData } = await supabase
+      .from('profiles')
+      .select('company_id')
+      .eq('id', userId)
+      .single()
+
+    const companyId = profileData?.company_id
+
     const { data: userRolesData } = await supabase
       .from('user_roles')
       .select('roles(name)')
       .eq('user_id', userId)
 
     const roles = (userRolesData as unknown as { roles: { name: string } }[])?.map(ur => ur.roles?.name).filter(Boolean) || []
-    const isSuperUser = roles.includes('super_admin')
+    const isSuperUserRole = roles.includes('super_admin')
 
     setLoading(true)
 
@@ -87,22 +95,14 @@ export default function JobsPage() {
       .order('created_at', { ascending: false })
       .limit(200)
 
-    // If not a super user, filter by user_id or job_assignments
-    if (!isSuperUser) {
-      // First get the job IDs the user is assigned to
-      const { data: assignedJobIds } = await supabase
-        .from('job_assignments')
-        .select('job_id')
-        .eq('user_id', userId)
-
-      const assignedJobIdList = (assignedJobIds as { job_id: number }[] | null)?.map((a: { job_id: number }) => a.job_id) || []
-
-      // Filter jobs where user is owner OR assigned
-      const orConditions = [`user_id.eq.${userId}`]
-      if (assignedJobIdList.length > 0) {
-        orConditions.push(`id.in.(${assignedJobIdList.join(',')})`)
+    // If not a super user, filter by company_id
+    if (!isSuperUserRole) {
+      if (companyId) {
+        query = query.eq('company_id', companyId)
+      } else {
+        // Fallback for users without a company_id linked yet
+        query = query.eq('user_id', userId)
       }
-      query = query.or(orConditions.join(','))
     }
 
     const { data, error } = await query

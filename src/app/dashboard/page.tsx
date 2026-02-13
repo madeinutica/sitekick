@@ -62,13 +62,44 @@ export default function DashboardPage() {
     setIsSuperUser(roles.includes('super_admin'))
   }, [supabase])
 
-  const fetchJobs = useCallback(async () => {
+  const fetchJobs = useCallback(async (userId: string) => {
     setMapLoading(true)
-    const { data: jobsData, error: jobsError } = await supabase
+
+    // Get user roles and company_id
+    const { data: profileData } = await supabase
+      .from('profiles')
+      .select('company_id')
+      .eq('id', userId)
+      .single()
+
+    const companyId = profileData?.company_id
+
+    // Get user roles first to check if super user
+    const { data: userRolesData } = await supabase
+      .from('user_roles')
+      .select('roles(name)')
+      .eq('user_id', userId)
+
+    const roles = (userRolesData as unknown as { roles: { name: string } }[])?.map(ur => ur.roles?.name).filter(Boolean) || []
+    const isSuperUserRole = roles.includes('super_admin')
+
+    let query = supabase
       .from('jobs')
       .select('id, job_name, address, customer_name, status, category')
       .order('created_at', { ascending: false })
-      .limit(50) // Limit for performance
+      .limit(50)
+
+    // If not a super user, filter by company_id
+    if (!isSuperUserRole) {
+      if (companyId) {
+        query = query.eq('company_id', companyId)
+      } else {
+        // Fallback for users without a company_id linked yet
+        query = query.eq('user_id', userId)
+      }
+    }
+
+    const { data: jobsData, error: jobsError } = await query
 
     if (jobsError) {
       console.error('Jobs error:', jobsError)
@@ -107,7 +138,7 @@ export default function DashboardPage() {
       } else {
         setUser(data.user)
         fetchProfileData(data.user.id)
-        fetchJobs()
+        fetchJobs(data.user.id)
       }
     }
     checkUser()
@@ -458,8 +489,8 @@ export default function DashboardPage() {
                 <div>
                   <label className="text-xs font-bold text-slate-400 uppercase tracking-widest block mb-1">Status</label>
                   <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold ${['installed', 'completed', 'closed'].includes(selectedJob.status?.toLowerCase() || '')
-                      ? 'bg-green-100 text-green-800'
-                      : 'bg-amber-100 text-amber-800'
+                    ? 'bg-green-100 text-green-800'
+                    : 'bg-amber-100 text-amber-800'
                     }`}>
                     {selectedJob.status || 'No Status'}
                   </span>

@@ -40,14 +40,43 @@ export default function SignupPage() {
     }
 
     if (authData.user) {
-      // Create or update the profile with additional info
+      let companyId = null
+
+      if (company.trim()) {
+        // 1. Try to find existing company
+        const { data: existingCompany } = await supabase
+          .from('companies')
+          .select('id')
+          .eq('name', company.trim())
+          .maybeSingle()
+
+        if (existingCompany) {
+          companyId = existingCompany.id
+        } else {
+          // 2. Create new company
+          const { data: newCompany, error: companyError } = await supabase
+            .from('companies')
+            .insert({ name: company.trim() })
+            .select('id')
+            .single()
+
+          if (!companyError && newCompany) {
+            companyId = newCompany.id
+          } else {
+            console.error('Error creating company:', companyError)
+          }
+        }
+      }
+
+      // 3. Create or update the profile with company_id
       const { error: profileError } = await supabase
         .from('profiles')
         .upsert({
           id: authData.user.id,
           full_name: fullName || null,
           phone: phone || null,
-          company: company || null,
+          company: company || null, // Keep text company for reference
+          company_id: companyId,
           updated_at: new Date().toISOString(),
         })
 
