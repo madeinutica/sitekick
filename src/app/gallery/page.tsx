@@ -52,23 +52,62 @@ export default function GalleryPage() {
   const fetchAllPhotos = useCallback(async () => {
     try {
       setLoading(true)
-      
-      // Single optimized query instead of multiple calls
-      const { data: photosData, error: photosError } = await supabase
+
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return
+
+      // Get user profiles and roles for scoping
+      const { data: profileData } = await supabase.from('profiles').select('company_id').eq('id', user.id).single()
+      const companyId = profileData?.company_id
+
+      const { data: userRolesData } = await supabase.from('user_roles').select('roles(name)').eq('user_id', user.id)
+      const roles = (userRolesData as unknown as { roles: { name: string } }[])?.map(ur => ur.roles?.name).filter(Boolean) || []
+      const isGlobalAdmin = roles.includes('super_admin') || roles.includes('brand_ambassador')
+      const isCompanyAdmin = roles.includes('company_admin')
+
+      let query = supabase
         .from('job_photos')
         .select(`
           *,
-          jobs(job_name, category)
+          jobs!inner(id, job_name, category, company_id, user_id)
         `)
         .order('created_at', { ascending: false })
 
+      // Scoping for non-global admins
+      if (!isGlobalAdmin) {
+        if (isCompanyAdmin) {
+          // Company Admin: All photos in company
+          if (companyId) {
+            query = query.eq('jobs.company_id', companyId)
+          }
+        } else {
+          // Rep/Tech: Fetch assignments first
+          const { data: assignments } = await supabase
+            .from('job_assignments')
+            .select('job_id')
+            .eq('user_id', user.id)
+
+          const assignedIds = assignments?.map((a: { job_id: number }) => a.job_id) || []
+
+          // Build OR filter: Owns job OR Assigned to job
+          let orFilter = `user_id.eq.${user.id}`
+          if (assignedIds.length > 0) {
+            orFilter = `${orFilter},id.in.(${assignedIds.join(',')})`
+          }
+
+          // Filter jobs table within the join
+          query = query.or(orFilter, { foreignTable: 'jobs' })
+        }
+      }
+
+      const { data: photosData, error: photosError } = await query
+
       if (photosError) {
         console.error('Error fetching photos:', photosError)
-        // Don't redirect on error - just show empty state
         return
       }
 
-      // Batch fetch all user profiles at once
+      // Batch fetch all user profiles at once for display
       const userIds = [...new Set(photosData?.map((p: PhotoData) => p.user_id) || [])]
       const { data: profilesData } = await supabase
         .from('profiles')
@@ -78,7 +117,7 @@ export default function GalleryPage() {
       // Create profile lookup map
       const profileMap = new Map(profilesData?.map((p: ProfileData) => [p.id, p]) || [])
 
-      // Combine data efficiently without additional API calls
+      // Combine data efficiently
       const photosWithProfiles = photosData?.map((photo: PhotoData) => {
         const profile = profileMap.get(photo.user_id) as ProfileData | undefined
         return {
@@ -92,7 +131,6 @@ export default function GalleryPage() {
       setPhotos(photosWithProfiles)
     } catch (error) {
       console.error('Error in fetchAllPhotos:', error)
-      // Don't redirect on error
     } finally {
       setLoading(false)
     }
@@ -102,28 +140,20 @@ export default function GalleryPage() {
     const checkUser = async () => {
       try {
         const { data } = await supabase.auth.getUser()
-        if (!data.user) {
-          // Don't redirect immediately - let auth state handle it
-          return
-        }
-
+        if (!data.user) return
         setUser(data.user)
 
-        // Get user roles
         const { data: userRolesData } = await supabase
           .from('user_roles')
           .select('roles(name)')
           .eq('user_id', data.user.id)
-        
+
         const roles = (userRolesData as unknown as { roles: { name: string } }[])?.map(ur => ur.roles?.name).filter(Boolean) || []
         setUserRoles(roles)
 
         await fetchAllPhotos()
       } catch (error) {
         console.error('Error in checkUser:', error)
-        // Don't redirect on error
-      } finally {
-        setLoading(false)
       }
     }
 
@@ -145,6 +175,10 @@ export default function GalleryPage() {
     return null
   }
 
+  const isAnyAdmin = userRoles.includes('super_admin') ||
+    userRoles.includes('brand_ambassador') ||
+    userRoles.includes('company_admin')
+
   return (
     <div className="min-h-screen bg-linear-to-br from-light-gray via-white to-light-gray">
       {/* Header */}
@@ -162,9 +196,9 @@ export default function GalleryPage() {
               <div>
                 <h1 className="text-2xl font-bold text-slate-900">Photo Gallery</h1>
                 <p className="text-slate-600 text-sm">
-                  {userRoles.includes('brand_ambassador') || userRoles.includes('super_admin')
-                    ? 'All photos from every job'
-                    : 'All photos from your accessible jobs'
+                  {isAnyAdmin
+                    ? 'All company photos'
+                    : 'Photos from your assigned jobs'
                   }
                 </p>
               </div>
@@ -187,11 +221,10 @@ export default function GalleryPage() {
             <div className="flex flex-wrap gap-2">
               <button
                 onClick={() => setFilterType('all')}
-                className={`px-4 py-2 rounded-lg font-semibold transition ${
-                  filterType === 'all'
+                className={`px-4 py-2 rounded-lg font-semibold transition ${filterType === 'all'
                     ? 'bg-indigo-600 text-white'
                     : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-                }`}
+                  }`}
               >
                 All Photos ({photos.length})
               </button>
@@ -202,11 +235,10 @@ export default function GalleryPage() {
                   <button
                     key={type}
                     onClick={() => setFilterType(type)}
-                    className={`px-4 py-2 rounded-lg font-semibold transition capitalize ${
-                      filterType === type
+                    className={`px-4 py-2 rounded-lg font-semibold transition capitalize ${filterType === type
                         ? 'bg-indigo-600 text-white'
                         : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-                    }`}
+                      }`}
                   >
                     {type} ({count})
                   </button>
@@ -218,11 +250,10 @@ export default function GalleryPage() {
             <div className="flex flex-wrap gap-2">
               <button
                 onClick={() => setCategoryFilter('all')}
-                className={`px-4 py-2 rounded-lg font-semibold transition ${
-                  categoryFilter === 'all'
+                className={`px-4 py-2 rounded-lg font-semibold transition ${categoryFilter === 'all'
                     ? 'bg-green-600 text-white'
                     : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-                }`}
+                  }`}
               >
                 All Categories ({photos.length})
               </button>
@@ -233,11 +264,10 @@ export default function GalleryPage() {
                   <button
                     key={category}
                     onClick={() => setCategoryFilter(category)}
-                    className={`px-4 py-2 rounded-lg font-semibold transition ${
-                      categoryFilter === category
+                    className={`px-4 py-2 rounded-lg font-semibold transition ${categoryFilter === category
                         ? 'bg-green-600 text-white'
                         : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-                    }`}
+                      }`}
                   >
                     {category} ({count})
                   </button>
@@ -269,13 +299,12 @@ export default function GalleryPage() {
                   />
                   <div className="absolute top-2 left-2 flex flex-col gap-1">
                     {photo.photo_type && (
-                      <span className={`px-2 py-1 text-xs font-semibold rounded-full ${
-                        photo.photo_type === 'before' ? 'bg-blue-500 text-white' :
-                        photo.photo_type === 'after' ? 'bg-green-500 text-white' :
-                        photo.photo_type === 'issue' ? 'bg-red-500 text-white' :
-                        photo.photo_type === 'completed' ? 'bg-purple-500 text-white' :
-                        'bg-slate-500 text-white'
-                      }`}>
+                      <span className={`px-2 py-1 text-xs font-semibold rounded-full ${photo.photo_type === 'before' ? 'bg-blue-500 text-white' :
+                          photo.photo_type === 'after' ? 'bg-green-500 text-white' :
+                            photo.photo_type === 'issue' ? 'bg-red-500 text-white' :
+                              photo.photo_type === 'completed' ? 'bg-purple-500 text-white' :
+                                'bg-slate-500 text-white'
+                        }`}>
                         {photo.photo_type}
                       </span>
                     )}
@@ -285,13 +314,12 @@ export default function GalleryPage() {
                       </span>
                     )}
                     {photo.job_category && (
-                      <span className={`px-2 py-1 text-xs font-semibold rounded-full ${
-                        photo.job_category === 'Windows' ? 'bg-blue-600 text-white' :
-                        photo.job_category === 'Bathrooms' ? 'bg-green-600 text-white' :
-                        photo.job_category === 'Siding' ? 'bg-yellow-600 text-white' :
-                        photo.job_category === 'Doors' ? 'bg-purple-600 text-white' :
-                        'bg-slate-600 text-white'
-                      }`}>
+                      <span className={`px-2 py-1 text-xs font-semibold rounded-full ${photo.job_category === 'Windows' ? 'bg-blue-600 text-white' :
+                          photo.job_category === 'Bathrooms' ? 'bg-green-600 text-white' :
+                            photo.job_category === 'Siding' ? 'bg-yellow-600 text-white' :
+                              photo.job_category === 'Doors' ? 'bg-purple-600 text-white' :
+                                'bg-slate-600 text-white'
+                        }`}>
                         {photo.job_category}
                       </span>
                     )}
@@ -415,13 +443,12 @@ export default function GalleryPage() {
               <div className="flex items-center justify-between mb-4">
                 <div className="flex items-center gap-2">
                   {selectedPhoto.photo_type && (
-                    <span className={`px-3 py-1 text-sm font-semibold rounded-full ${
-                      selectedPhoto.photo_type === 'before' ? 'bg-blue-500 text-white' :
-                      selectedPhoto.photo_type === 'after' ? 'bg-green-500 text-white' :
-                      selectedPhoto.photo_type === 'issue' ? 'bg-red-500 text-white' :
-                      selectedPhoto.photo_type === 'completed' ? 'bg-purple-500 text-white' :
-                      'bg-slate-500 text-white'
-                    }`}>
+                    <span className={`px-3 py-1 text-sm font-semibold rounded-full ${selectedPhoto.photo_type === 'before' ? 'bg-blue-500 text-white' :
+                        selectedPhoto.photo_type === 'after' ? 'bg-green-500 text-white' :
+                          selectedPhoto.photo_type === 'issue' ? 'bg-red-500 text-white' :
+                            selectedPhoto.photo_type === 'completed' ? 'bg-purple-500 text-white' :
+                              'bg-slate-500 text-white'
+                      }`}>
                       {selectedPhoto.photo_type}
                     </span>
                   )}
@@ -431,13 +458,12 @@ export default function GalleryPage() {
                     </span>
                   )}
                   {selectedPhoto.job_category && (
-                    <span className={`px-3 py-1 text-sm font-semibold rounded-full ${
-                      selectedPhoto.job_category === 'Windows' ? 'bg-blue-600 text-white' :
-                      selectedPhoto.job_category === 'Bathrooms' ? 'bg-green-600 text-white' :
-                      selectedPhoto.job_category === 'Siding' ? 'bg-yellow-600 text-white' :
-                      selectedPhoto.job_category === 'Doors' ? 'bg-purple-600 text-white' :
-                      'bg-slate-600 text-white'
-                    }`}>
+                    <span className={`px-3 py-1 text-sm font-semibold rounded-full ${selectedPhoto.job_category === 'Windows' ? 'bg-blue-600 text-white' :
+                        selectedPhoto.job_category === 'Bathrooms' ? 'bg-green-600 text-white' :
+                          selectedPhoto.job_category === 'Siding' ? 'bg-yellow-600 text-white' :
+                            selectedPhoto.job_category === 'Doors' ? 'bg-purple-600 text-white' :
+                              'bg-slate-600 text-white'
+                      }`}>
                       {selectedPhoto.job_category}
                     </span>
                   )}
