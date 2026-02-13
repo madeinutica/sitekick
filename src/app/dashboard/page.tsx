@@ -81,7 +81,10 @@ export default function DashboardPage() {
       .eq('user_id', userId)
 
     const roles = (userRolesData as unknown as { roles: { name: string } }[])?.map(ur => ur.roles?.name).filter(Boolean) || []
-    const isSuperUserRole = roles.includes('super_admin')
+    const isGlobalAdmin = roles.includes('super_admin') || roles.includes('brand_ambassador')
+    const isCompanyAdmin = roles.includes('company_admin')
+
+    setIsSuperUser(isGlobalAdmin || isCompanyAdmin)
 
     let query = supabase
       .from('jobs')
@@ -89,12 +92,12 @@ export default function DashboardPage() {
       .order('created_at', { ascending: false })
       .limit(50)
 
-    // If not a super user, filter by company_id
-    if (!isSuperUserRole) {
+    // RLS handles the permissions. 
+    // We filter by company_id for non-global admins for extra safety/performance.
+    if (!isGlobalAdmin) {
       if (companyId) {
         query = query.eq('company_id', companyId)
       } else {
-        // Fallback for users without a company_id linked yet
         query = query.eq('user_id', userId)
       }
     }

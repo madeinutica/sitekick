@@ -41,6 +41,7 @@ export default function SignupPage() {
 
     if (authData.user) {
       let companyId = null
+      let assignedRoleName = 'rep' // Default role for joining existing
 
       if (company.trim()) {
         // 1. Try to find existing company
@@ -62,13 +63,30 @@ export default function SignupPage() {
 
           if (!companyError && newCompany) {
             companyId = newCompany.id
+            assignedRoleName = 'company_admin' // Creator is the admin
           } else {
             console.error('Error creating company:', companyError)
           }
         }
       }
 
-      // 3. Create or update the profile with company_id
+      // 3. Assign role to user
+      const { data: roleData } = await supabase
+        .from('roles')
+        .select('id')
+        .eq('name', assignedRoleName)
+        .single()
+
+      if (roleData) {
+        await supabase
+          .from('user_roles')
+          .insert({
+            user_id: authData.user.id,
+            role_id: roleData.id,
+          })
+      }
+
+      // 4. Create or update the profile with company_id
       const { error: profileError } = await supabase
         .from('profiles')
         .upsert({
