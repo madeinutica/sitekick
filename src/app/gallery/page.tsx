@@ -56,58 +56,21 @@ export default function GalleryPage() {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
 
-      // Get user profiles and roles for scoping
-      const { data: profileData } = await supabase.from('profiles').select('company_id').eq('id', user.id).single()
-      const companyId = profileData?.company_id
-
-      const { data: userRolesData } = await supabase.from('user_roles').select('roles(name)').eq('user_id', user.id)
-      const roles = (userRolesData as unknown as { roles: { name: string } }[])?.map(ur => ur.roles?.name).filter(Boolean) || []
-      const isGlobalAdmin = roles.includes('super_admin') || roles.includes('brand_ambassador')
-      const isCompanyAdmin = roles.includes('company_admin')
-
-      let query = supabase
+      // Use a simple query and let RLS handle the permissions
+      const { data: photosData, error: photosError } = await supabase
         .from('job_photos')
         .select(`
           *,
-          jobs!inner(id, job_name, category, company_id, user_id)
+          jobs!inner(job_name, category)
         `)
         .order('created_at', { ascending: false })
 
-      // Scoping for non-global admins
-      if (!isGlobalAdmin) {
-        if (isCompanyAdmin) {
-          // Company Admin: All photos in company
-          if (companyId) {
-            query = query.eq('jobs.company_id', companyId)
-          }
-        } else {
-          // Rep/Tech: Fetch assignments first
-          const { data: assignments } = await supabase
-            .from('job_assignments')
-            .select('job_id')
-            .eq('user_id', user.id)
-
-          const assignedIds = assignments?.map((a: { job_id: number }) => a.job_id) || []
-
-          // Build OR filter: Owns job OR Assigned to job
-          let orFilter = `user_id.eq.${user.id}`
-          if (assignedIds.length > 0) {
-            orFilter = `${orFilter},id.in.(${assignedIds.join(',')})`
-          }
-
-          // Filter jobs table within the join
-          query = query.or(orFilter, { foreignTable: 'jobs' })
-        }
-      }
-
-      const { data: photosData, error: photosError } = await query
-
       if (photosError) {
-        console.error('Error fetching photos:', photosError)
+        console.error('Error fetching photos:', JSON.stringify(photosError, null, 2))
         return
       }
 
-      // Batch fetch all user profiles at once for display
+      // Batch fetch all user profiles at once
       const userIds = [...new Set(photosData?.map((p: PhotoData) => p.user_id) || [])]
       const { data: profilesData } = await supabase
         .from('profiles')

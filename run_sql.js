@@ -25,19 +25,42 @@ async function runSQL() {
 
     console.log(`Running SQL migration from ${sqlFile}...`);
 
-    // Split SQL into individual statements
-    const statements = sql
-      .split(';')
+    // Split SQL into individual statements, but respect $$ blocks
+    const rawStatements = [];
+    let currentStatement = '';
+    let inDollarBlock = false;
+
+    const lines = sql.split('\n');
+    for (const line of lines) {
+      if (line.includes('$$')) {
+        inDollarBlock = !inDollarBlock;
+      }
+
+      currentStatement += line + '\n';
+
+      if (!inDollarBlock && line.trim().endsWith(';')) {
+        rawStatements.push(currentStatement.trim());
+        currentStatement = '';
+      }
+    }
+
+    if (currentStatement.trim()) {
+      rawStatements.push(currentStatement.trim());
+    }
+
+    const statements = rawStatements
       .map(stmt => stmt.trim())
       .filter(stmt => stmt.length > 0 && !stmt.startsWith('--'));
 
     for (const statement of statements) {
       if (statement.trim()) {
         console.log('Executing:', statement.substring(0, 100) + '...');
-        const { error } = await supabase.rpc('exec_sql', { sql: statement + ';' });
+        const { data, error } = await supabase.rpc('exec_sql', { sql: statement + ';' });
         if (error) {
           console.error('Error executing statement:', error);
           // Continue with other statements
+        } else if (data) {
+          console.log('Result:', JSON.stringify(data, null, 2));
         }
       }
     }
