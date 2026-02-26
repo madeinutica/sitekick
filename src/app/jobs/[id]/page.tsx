@@ -552,8 +552,7 @@ export default function JobDetailPage() {
 
   // Fetch assigned users with their roles
   useEffect(() => {
-    const hasAdminPrivileges = userRoles.some(role => ['super_admin', 'company_admin', 'brand_ambassador'].includes(role.name))
-    if (jobId && hasAdminPrivileges) {
+    if (jobId) {
       const fetchAssignedUsers = async () => {
         const { data } = await supabase
           .from('job_assignments')
