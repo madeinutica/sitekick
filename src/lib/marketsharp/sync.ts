@@ -73,7 +73,11 @@ function buildAddressString(addr?: MSAddress | null, job?: MSJob | null): string
  * Run a full sync from MarketSharp to local database.
  * This upserts contacts and jobs using the marketsharp_id as the foreign key.
  */
-export async function runSync(): Promise<SyncResult> {
+/**
+ * Run a full sync for a specific company from MarketSharp to local database.
+ * This upserts contacts and jobs using the marketsharp_id as the foreign key.
+ */
+export async function runSync(companyId: string, config: { companyId: string; apiKey: string; secretKey: string }, triggeringUserId?: string): Promise<SyncResult> {
   const startedAt = new Date().toISOString()
   const errors: string[] = []
   let contactsSynced = 0
@@ -85,13 +89,13 @@ export async function runSync(): Promise<SyncResult> {
     // ─── Step 1: Sync Contacts ───────────────────────────────────────
     let msContacts: MSContact[] = []
     try {
-      msContacts = await fetchCustomers()
+      msContacts = await fetchCustomers(config)
       if (!Array.isArray(msContacts)) msContacts = []
     } catch (err) {
       const msg = `Failed to fetch customers, trying all contacts: ${err instanceof Error ? err.message : err}`
       errors.push(msg)
       try {
-        msContacts = await fetchContacts()
+        msContacts = await fetchContacts(undefined, config)
         if (!Array.isArray(msContacts)) msContacts = []
       } catch (err2) {
         errors.push(`Failed to fetch contacts: ${err2 instanceof Error ? err2.message : err2}`)
@@ -105,12 +109,12 @@ export async function runSync(): Promise<SyncResult> {
         let phone: MSContactPhone | null = null
 
         try {
-          const addresses = await fetchContactAddresses(contact.id)
+          const addresses = await fetchContactAddresses(contact.id, config)
           address = Array.isArray(addresses) && addresses.length > 0 ? addresses[0] : null
         } catch { /* address fetch failed, continue */ }
 
         try {
-          const phones = await fetchContactPhones(contact.id)
+          const phones = await fetchContactPhones(contact.id, config)
           phone = Array.isArray(phones) && phones.length > 0 ? phones[0] : null
         } catch { /* phone fetch failed, continue */ }
 
@@ -121,6 +125,7 @@ export async function runSync(): Promise<SyncResult> {
         const { error } = await supabase
           .from('ms_contacts')
           .upsert({
+            company_id: companyId,
             marketsharp_id: contact.id,
             first_name: contact.firstName || '',
             last_name: contact.lastName || '',
@@ -137,7 +142,7 @@ export async function runSync(): Promise<SyncResult> {
             last_synced_at: new Date().toISOString(),
             ms_created_date: contact.creationDate || null,
             ms_last_update: contact.lastUpdate || null,
-          }, { onConflict: 'marketsharp_id' })
+          }, { onConflict: 'company_id, marketsharp_id' })
 
         if (error) {
           errors.push(`Contact ${contact.id} upsert error: ${error.message}`)
@@ -152,7 +157,7 @@ export async function runSync(): Promise<SyncResult> {
     // ─── Step 2: Sync Jobs ────────────────────────────────────────────
     let msJobs: MSJob[] = []
     try {
-      msJobs = await fetchJobs()
+      msJobs = await fetchJobs(undefined, config)
       if (!Array.isArray(msJobs)) msJobs = []
     } catch (err) {
       errors.push(`Failed to fetch jobs: ${err instanceof Error ? err.message : err}`)
@@ -166,13 +171,13 @@ export async function runSync(): Promise<SyncResult> {
         if (msJob.contactId) {
           if (!msJob.addressLine1) {
             try {
-              const addresses = await fetchContactAddresses(msJob.contactId)
+              const addresses = await fetchContactAddresses(msJob.contactId, config)
               contactAddress = Array.isArray(addresses) && addresses.length > 0 ? addresses[0] : null
             } catch { /* ignore */ }
           }
           // Fetch phone for customer info
           try {
-            const phones = await fetchContactPhones(msJob.contactId)
+            const phones = await fetchContactPhones(msJob.contactId, config)
             contactPhone = Array.isArray(phones) && phones.length > 0 ? phones[0] : null
           } catch { /* ignore */ }
         }
@@ -180,7 +185,7 @@ export async function runSync(): Promise<SyncResult> {
         // Fetch contract data for this job
         let contract: MSContract | null = null
         try {
-          const contracts = await fetchJobContracts(msJob.id)
+          const contracts = await fetchJobContracts(msJob.id, config)
           contract = Array.isArray(contracts) && contracts.length > 0 ? contracts[0] : null
         } catch { /* ignore contract fetch failure */ }
 
@@ -198,6 +203,7 @@ export async function runSync(): Promise<SyncResult> {
         const { error } = await supabase
           .from('ms_jobs')
           .upsert({
+            company_id: companyId,
             marketsharp_id: msJob.id,
             marketsharp_contact_id: msJob.contactId || null,
             job_name: jobDisplayName,
@@ -216,7 +222,7 @@ export async function runSync(): Promise<SyncResult> {
             last_synced_at: new Date().toISOString(),
             ms_created_date: msJob.createdDate || null,
             ms_last_update: msJob.lastUpdate || null,
-          }, { onConflict: 'marketsharp_id' })
+          }, { onConflict: 'company_id, marketsharp_id' })
 
         if (error) {
           errors.push(`Job ${msJob.id} upsert error: ${error.message}`)
@@ -247,6 +253,7 @@ export async function runSync(): Promise<SyncResult> {
           const customerPhoneStr = contactPhone?.cellPhone || contactPhone?.homePhone || contactPhone?.workPhone || null
 
           const jobData = {
+            company_id: companyId, // Ensure company assignment
             job_name: jobDisplayName,
             address: address,
             category: category,
@@ -274,6 +281,7 @@ export async function runSync(): Promise<SyncResult> {
               .from('jobs')
               .insert({
                 ...jobData,
+                user_id: triggeringUserId || null, // Attribute to triggering user if available
                 marketsharp_job_id: msJob.id,
                 marketsharp_contact_id: msJob.contactId || null,
               })
@@ -283,24 +291,27 @@ export async function runSync(): Promise<SyncResult> {
             }
           } else {
             // Update existing linked job
+            // Check if it belongs to the same company
             const { error: updateError } = await supabase
               .from('jobs')
-              .update(jobData)
+              .update({ ...jobData, is_archived: false }) // Reinstate if it was archived
               .eq('marketsharp_job_id', msJob.id)
+              .eq('company_id', companyId) // Safety check
 
             if (updateError) {
               errors.push(`Job update ${msJob.id}: ${updateError.message}`)
             }
           }
         } else if (existingLink) {
-          // Job is finished and older than 30 days — remove from main table
-          const { error: deleteError } = await supabase
+          // Job is finished and older than 30 days — archive instead of delete
+          const { error: archiveError } = await supabase
             .from('jobs')
-            .delete()
+            .update({ is_archived: true })
             .eq('marketsharp_job_id', msJob.id)
+            .eq('company_id', companyId)
 
-          if (deleteError) {
-            errors.push(`Job cleanup ${msJob.id}: ${deleteError.message}`)
+          if (archiveError) {
+            errors.push(`Job archiving ${msJob.id}: ${archiveError.message}`)
           }
         }
       } catch (err) {
@@ -313,6 +324,7 @@ export async function runSync(): Promise<SyncResult> {
     await supabase
       .from('ms_sync_log')
       .insert({
+        company_id: companyId,
         started_at: startedAt,
         completed_at: completedAt,
         contacts_synced: contactsSynced,
@@ -338,6 +350,7 @@ export async function runSync(): Promise<SyncResult> {
       await supabase
         .from('ms_sync_log')
         .insert({
+          company_id: companyId,
           started_at: startedAt,
           completed_at: completedAt,
           contacts_synced: contactsSynced,
@@ -357,3 +370,4 @@ export async function runSync(): Promise<SyncResult> {
     }
   }
 }
+

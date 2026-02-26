@@ -16,16 +16,20 @@ export interface MarketSharpConfig {
   companyId: string
   apiKey: string
   secretKey: string
+  baseUrl?: string
 }
 
-function getConfig(): MarketSharpConfig {
+function getConfig(config?: MarketSharpConfig): MarketSharpConfig {
+  if (config) return config
+
+  // Fallback to env vars for backward compatibility / testing
   const companyId = process.env.MARKETSHARP_COMPANY_ID
   const apiKey = process.env.MARKETSHARP_API_KEY
   const secretKey = process.env.MARKETSHARP_SECRET_KEY
 
   if (!companyId || !apiKey || !secretKey) {
     throw new Error(
-      'MarketSharp credentials not configured. Set MARKETSHARP_COMPANY_ID, MARKETSHARP_API_KEY, and MARKETSHARP_SECRET_KEY environment variables.'
+      'MarketSharp credentials not configured.'
     )
   }
 
@@ -83,50 +87,6 @@ function parseODataDates(obj: unknown): unknown {
   return obj
 }
 
-/**
- * Make an authenticated GET request to the MarketSharp OData API.
- */
-async function msGet<T>(endpoint: string, params?: Record<string, string>): Promise<T> {
-  const config = getConfig()
-  const auth = generateAuthHeader(config)
-
-  let url = `${MARKETSHARP_BASE_URL}/${endpoint}`
-  if (params) {
-    const searchParams = new URLSearchParams(params)
-    url += `?${searchParams.toString()}`
-  }
-
-  const response = await fetch(url, {
-    method: 'GET',
-    headers: {
-      'Authorization': auth,
-      'Accept': 'application/json',
-    },
-  })
-
-  if (!response.ok) {
-    const text = await response.text()
-    throw new Error(`MarketSharp API error ${response.status}: ${text}`)
-  }
-
-  const data = await response.json()
-  // OData WCF responses use varying envelope formats:
-  //   - Collections may be: { d: [...] } or { d: { results: [...] } }
-  //   - Single entities may be: { d: { ... } }
-  //   - Newer OData may use: { value: [...] }
-  let result: unknown
-  if (data.d) {
-    if (Array.isArray(data.d)) result = data.d
-    else if (data.d.results && Array.isArray(data.d.results)) result = data.d.results
-    else result = data.d
-  } else if (data.value) {
-    result = data.value
-  } else {
-    result = data
-  }
-  // Parse OData date formats and strip deferred navigation properties
-  return parseODataDates(result) as T
-}
 
 // ─── MarketSharp Data Types ────────────────────────────────────────────
 
@@ -259,128 +219,177 @@ export interface MSContract {
 // ─── API Methods ───────────────────────────────────────────────────────
 
 /**
+ * Make an authenticated GET request to the MarketSharp OData API.
+ */
+async function msGet<T>(endpoint: string, params?: Record<string, string>, config?: MarketSharpConfig): Promise<T> {
+  const cfg = getConfig(config)
+  const auth = generateAuthHeader(cfg)
+
+  const baseUrl = cfg.baseUrl || MARKETSHARP_BASE_URL
+  let url = `${baseUrl}/${endpoint}`
+  if (params) {
+    const searchParams = new URLSearchParams(params)
+    url += `?${searchParams.toString()}`
+  }
+
+  const response = await fetch(url, {
+    method: 'GET',
+    headers: {
+      'Authorization': auth,
+      'Accept': 'application/json',
+    },
+  })
+
+  if (!response.ok) {
+    const text = await response.text()
+    throw new Error(`MarketSharp API error ${response.status}: ${text}`)
+  }
+
+  const data = await response.json()
+  // OData WCF responses use varying envelope formats:
+  //   - Collections may be: { d: [...] } or { d: { results: [...] } }
+  //   - Single entities may be: { d: { ... } }
+  //   - Newer OData may use: { value: [...] }
+  let result: unknown
+  if (data.d) {
+    if (Array.isArray(data.d)) result = data.d
+    else if (data.d.results && Array.isArray(data.d.results)) result = data.d.results
+    else result = data.d
+  } else if (data.value) {
+    result = data.value
+  } else {
+    result = data
+  }
+  // Parse OData date formats and strip deferred navigation properties
+  return parseODataDates(result) as T
+}
+
+/**
  * Fetch all contacts (limit 5000 per MarketSharp API)
  */
-export async function fetchContacts(filter?: string): Promise<MSContact[]> {
+export async function fetchContacts(filter?: string, config?: MarketSharpConfig): Promise<MSContact[]> {
   const params: Record<string, string> = {}
   if (filter) params['$filter'] = filter
-  return msGet<MSContact[]>('Contacts', Object.keys(params).length > 0 ? params : undefined)
+  return msGet<MSContact[]>('Contacts', Object.keys(params).length > 0 ? params : undefined, config)
 }
 
 /**
  * Fetch a single contact by OID
  */
-export async function fetchContact(contactOid: string): Promise<MSContact> {
-  return msGet<MSContact>(`Contacts('${contactOid}')`)
+export async function fetchContact(contactOid: string, config?: MarketSharpConfig): Promise<MSContact> {
+  return msGet<MSContact>(`Contacts('${contactOid}')`, undefined, config)
 }
 
 /**
  * Fetch addresses for a contact
  */
-export async function fetchContactAddresses(contactOid: string): Promise<MSAddress[]> {
-  return msGet<MSAddress[]>(`Contacts('${contactOid}')/Address`)
+export async function fetchContactAddresses(contactOid: string, config?: MarketSharpConfig): Promise<MSAddress[]> {
+  return msGet<MSAddress[]>(`Contacts('${contactOid}')/Address`, undefined, config)
 }
 
 /**
  * Fetch phone numbers for a contact
  */
-export async function fetchContactPhones(contactOid: string): Promise<MSContactPhone[]> {
-  return msGet<MSContactPhone[]>(`Contacts('${contactOid}')/ContactPhone`)
+export async function fetchContactPhones(contactOid: string, config?: MarketSharpConfig): Promise<MSContactPhone[]> {
+  return msGet<MSContactPhone[]>(`Contacts('${contactOid}')/ContactPhone`, undefined, config)
 }
 
 /**
  * Fetch all jobs (limit 5000 per request)
  * Includes $expand=Contact to get customer name inline.
  */
-export async function fetchJobs(filter?: string): Promise<MSJob[]> {
+export async function fetchJobs(filter?: string, config?: MarketSharpConfig): Promise<MSJob[]> {
   const params: Record<string, string> = { '$expand': 'Contact' }
   if (filter) params['$filter'] = filter
-  return msGet<MSJob[]>('Jobs', params)
+  return msGet<MSJob[]>('Jobs', params, config)
 }
 
 /**
  * Fetch jobs for a specific contact
  */
-export async function fetchContactJobs(contactOid: string): Promise<MSJob[]> {
-  return msGet<MSJob[]>(`Contacts('${contactOid}')/Job`)
+export async function fetchContactJobs(contactOid: string, config?: MarketSharpConfig): Promise<MSJob[]> {
+  return msGet<MSJob[]>(`Contacts('${contactOid}')/Job`, undefined, config)
 }
 
 /**
  * Fetch inquiries/leads
  */
-export async function fetchInquiries(filter?: string): Promise<MSInquiry[]> {
+export async function fetchInquiries(filter?: string, config?: MarketSharpConfig): Promise<MSInquiry[]> {
   const params: Record<string, string> = {}
   if (filter) params['$filter'] = filter
-  return msGet<MSInquiry[]>('Inquiries', Object.keys(params).length > 0 ? params : undefined)
+  return msGet<MSInquiry[]>('Inquiries', Object.keys(params).length > 0 ? params : undefined, config)
 }
 
 /**
  * Fetch inquiries for a specific contact
  */
-export async function fetchContactInquiries(contactOid: string): Promise<MSInquiry[]> {
-  return msGet<MSInquiry[]>(`Contacts('${contactOid}')/Inquiry`)
+export async function fetchContactInquiries(contactOid: string, config?: MarketSharpConfig): Promise<MSInquiry[]> {
+  return msGet<MSInquiry[]>(`Contacts('${contactOid}')/Inquiry`, undefined, config)
 }
 
 /**
  * Fetch appointments
  */
-export async function fetchAppointments(filter?: string): Promise<MSAppointment[]> {
+export async function fetchAppointments(filter?: string, config?: MarketSharpConfig): Promise<MSAppointment[]> {
   const params: Record<string, string> = {}
   if (filter) params['$filter'] = filter
-  return msGet<MSAppointment[]>('Appointments', Object.keys(params).length > 0 ? params : undefined)
+  return msGet<MSAppointment[]>('Appointments', Object.keys(params).length > 0 ? params : undefined, config)
 }
 
 /**
  * Fetch employees
  */
-export async function fetchEmployees(): Promise<MSEmployee[]> {
-  return msGet<MSEmployee[]>('Employees')
+export async function fetchEmployees(config?: MarketSharpConfig): Promise<MSEmployee[]> {
+  return msGet<MSEmployee[]>('Employees', undefined, config)
 }
 
 /**
  * Fetch contracts for a job
  */
-export async function fetchContracts(filter?: string): Promise<MSContract[]> {
+export async function fetchContracts(filter?: string, config?: MarketSharpConfig): Promise<MSContract[]> {
   const params: Record<string, string> = {}
   if (filter) params['$filter'] = filter
-  return msGet<MSContract[]>('Contracts', Object.keys(params).length > 0 ? params : undefined)
+  return msGet<MSContract[]>('Contracts', Object.keys(params).length > 0 ? params : undefined, config)
 }
 
 /**
  * Fetch contracts for a specific job by job ID
  */
-export async function fetchJobContracts(jobId: string): Promise<MSContract[]> {
-  return msGet<MSContract[]>(`Jobs('${jobId}')/Contract`)
+export async function fetchJobContracts(jobId: string, config?: MarketSharpConfig): Promise<MSContract[]> {
+  return msGet<MSContract[]>(`Jobs('${jobId}')/Contract`, undefined, config)
 }
 
 /**
  * Fetch customers (contact type = customer)
  */
-export async function fetchCustomers(): Promise<MSContact[]> {
-  return msGet<MSContact[]>('Customers')
+export async function fetchCustomers(config?: MarketSharpConfig): Promise<MSContact[]> {
+  return msGet<MSContact[]>('Customers', undefined, config)
 }
 
 /**
  * Fetch leads
  */
-export async function fetchLeads(): Promise<MSContact[]> {
-  return msGet<MSContact[]>('Leads')
+export async function fetchLeads(config?: MarketSharpConfig): Promise<MSContact[]> {
+  return msGet<MSContact[]>('Leads', undefined, config)
 }
 
 /**
  * Fetch prospects
  */
-export async function fetchProspects(): Promise<MSContact[]> {
-  return msGet<MSContact[]>('Prospects')
+export async function fetchProspects(config?: MarketSharpConfig): Promise<MSContact[]> {
+  return msGet<MSContact[]>('Prospects', undefined, config)
 }
 
 /**
  * Test the MarketSharp API connection by fetching customers and jobs
  */
-export async function testConnection(): Promise<{ success: boolean; message: string; data?: unknown }> {
+/**
+ * Test the MarketSharp API connection by fetching customers and jobs
+ */
+export async function testConnection(config?: MarketSharpConfig): Promise<{ success: boolean; message: string; data?: unknown }> {
   try {
-    const customers = await fetchCustomers()
-    const jobs = await fetchJobs()
+    const customers = await fetchCustomers(config)
+    const jobs = await fetchJobs(undefined, config)
     const customerCount = Array.isArray(customers) ? customers.length : 0
     const jobCount = Array.isArray(jobs) ? jobs.length : 0
     return {

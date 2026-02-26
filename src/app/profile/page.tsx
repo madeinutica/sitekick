@@ -30,6 +30,7 @@ export default function ProfilePage() {
   const [changingPassword, setChangingPassword] = useState(false)
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
+  const [userRoles, setUserRoles] = useState<string[]>([])
   const router = useRouter()
   const supabase = createClient()
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -57,13 +58,24 @@ export default function ProfilePage() {
         .insert({ id: userId })
         .select()
         .single()
-      
+
       if (insertError) {
         console.error('Error creating profile:', insertError)
       } else if (newProfile) {
         console.log('Profile created successfully:', newProfile)
         setProfile(newProfile)
       }
+    }
+
+    // Fetch roles
+    const { data: rolesData } = await supabase
+      .from('user_roles')
+      .select('roles(name)')
+      .eq('user_id', userId)
+
+    if (rolesData) {
+      const roles = (rolesData as any[]).map(ur => ur.roles?.name).filter(Boolean)
+      setUserRoles(roles)
     }
   }, [supabase])
 
@@ -122,14 +134,14 @@ export default function ProfilePage() {
     if (!user) return
 
     setSaving(true)
-    
+
     console.log('Saving profile:', {
       full_name: fullName,
       phone: phone,
       company: company,
       user_id: user.id
     })
-    
+
     const { data, error } = await supabase
       .from('profiles')
       .update({
@@ -175,7 +187,7 @@ export default function ProfilePage() {
 
       if (error) {
         console.error('Error changing password:', error)
-        
+
         // Handle specific Supabase errors
         if (error.message.includes('session') || error.message.includes('auth')) {
           alert('Your session has expired. Please sign out and sign back in to change your password.')
@@ -296,6 +308,37 @@ export default function ProfilePage() {
                 className="w-full px-4 py-2 border border-slate-300 rounded-lg bg-slate-50 text-slate-500"
               />
               <p className="text-xs text-slate-500 mt-1">Email cannot be changed</p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-2">
+                Assigned Roles
+              </label>
+              <div className="flex flex-wrap gap-2">
+                {userRoles.length > 0 ? (
+                  userRoles.map((role) => {
+                    const isSuper = role === 'super_admin' || role === 'brand_ambassador';
+                    const isAdmin = role === 'company_admin';
+
+                    return (
+                      <span
+                        key={role}
+                        className={`px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider border translate-y-[-1px] transition-all hover:translate-y-[-2px] hover:shadow-sm ${isSuper
+                            ? 'bg-primary-red/5 text-primary-red border-primary-red/20 shadow-primary-red/5'
+                            : isAdmin
+                              ? 'bg-slate-900 text-white border-slate-900 shadow-slate-900/10'
+                              : 'bg-slate-100 text-slate-700 border-slate-200'
+                          }`}
+                      >
+                        {role.replace('_', ' ')}
+                      </span>
+                    )
+                  })
+                ) : (
+                  <span className="text-sm text-slate-500 italic">No roles assigned</span>
+                )}
+              </div>
+              <p className="text-xs text-slate-500 mt-2">Roles are managed by platform administrators</p>
             </div>
 
             <div>

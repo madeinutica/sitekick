@@ -1,21 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { runSync } from '@/lib/marketsharp/sync'
+import { createClient as createSupabaseAdmin } from '@supabase/supabase-js'
 
 /**
  * GET /api/cron/marketsharp-sync
  * 
- * Daily cron endpoint to sync MarketSharp data.
+ * Hourly cron endpoint to sync MarketSharp data for all companies.
  * Protected by CRON_SECRET to prevent unauthorized access.
  * 
  * For Vercel: Add to vercel.json:
  * {
  *   "crons": [{
  *     "path": "/api/cron/marketsharp-sync",
- *     "schedule": "0 6 * * *"
+ *     "schedule": "0 * * * *"
  *   }]
  * }
- * 
- * This runs every day at 6:00 AM UTC.
  */
 export async function GET(request: NextRequest) {
   // Verify cron secret to prevent unauthorized triggers
@@ -27,19 +26,44 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    // Check that MarketSharp credentials are configured
-    if (!process.env.MARKETSHARP_COMPANY_ID || !process.env.MARKETSHARP_API_KEY || !process.env.MARKETSHARP_SECRET_KEY) {
-      return NextResponse.json(
-        { error: 'MarketSharp credentials not configured. Sync skipped.' },
-        { status: 200 }
-      )
+    const supabase = createSupabaseAdmin(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!
+    )
+
+    // Fetch all companies with MarketSharp config
+    const { data: companies, error: fetchError } = await supabase
+      .from('companies')
+      .select('id, name, marketsharp_config')
+      .not('marketsharp_config', 'is', null)
+
+    if (fetchError) {
+      throw fetchError
     }
 
-    const result = await runSync()
+    if (!companies || companies.length === 0) {
+      return NextResponse.json({ message: 'No companies with MarketSharp configuration found.' })
+    }
+
+    const results: Record<string, any> = {}
+    const errors: string[] = []
+
+    // Sync each company
+    for (const company of companies) {
+      try {
+        const config = company.marketsharp_config as any
+        if (config.companyId && config.apiKey && config.secretKey) {
+          results[company.name || company.id] = await runSync(company.id, config)
+        }
+      } catch (err) {
+        errors.push(`Error syncing ${company.name || company.id}: ${err instanceof Error ? err.message : err}`)
+      }
+    }
 
     return NextResponse.json({
-      message: result.success ? 'Sync completed successfully' : 'Sync completed with errors',
-      ...result
+      message: errors.length === 0 ? 'Multi-tenant sync completed successfully' : 'Multi-tenant sync completed with some errors',
+      results,
+      errors: errors.length > 0 ? errors : undefined
     })
   } catch (error) {
     return NextResponse.json(

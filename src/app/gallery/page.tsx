@@ -17,6 +17,7 @@ type PhotoData = {
   longitude?: number
   job_id: number
   jobs?: { job_name: string; category?: string }
+  uploader_name?: string | null
 }
 
 type ProfileData = {
@@ -39,7 +40,15 @@ export default function GalleryPage() {
   const [showPhotoModal, setShowPhotoModal] = useState(false)
   const [filterType, setFilterType] = useState<string>('all')
   const [categoryFilter, setCategoryFilter] = useState<string>('all')
+  const [searchQuery, setSearchQuery] = useState('')
+  const [dateFilter, setDateFilter] = useState<string>('all')
   const [userRoles, setUserRoles] = useState<string[]>([])
+
+  // Edit states
+  const [isEditing, setIsEditing] = useState(false)
+  const [editCaption, setEditCaption] = useState('')
+  const [editType, setEditType] = useState('')
+  const [isSaving, setIsSaving] = useState(false)
 
   const supabase = createClient()
 
@@ -47,7 +56,39 @@ export default function GalleryPage() {
     return photos
       .filter(photo => filterType === 'all' || photo.photo_type === filterType)
       .filter(photo => categoryFilter === 'all' || photo.job_category === categoryFilter)
-  }, [photos, filterType, categoryFilter])
+      .filter(photo => {
+        if (!searchQuery.trim()) return true
+        const query = searchQuery.toLowerCase()
+        return (
+          photo.job_name?.toLowerCase().includes(query) ||
+          photo.caption?.toLowerCase().includes(query) ||
+          photo.uploader_name?.toLowerCase().includes(query)
+        )
+      })
+      .filter(photo => {
+        if (dateFilter === 'all' || !photo.created_at) return true
+        const photoDate = new Date(photo.created_at)
+        const now = new Date()
+
+        if (dateFilter === 'today') {
+          return photoDate.toDateString() === now.toDateString()
+        }
+
+        if (dateFilter === 'week') {
+          const weekAgo = new Date()
+          weekAgo.setDate(now.getDate() - 7)
+          return photoDate >= weekAgo
+        }
+
+        if (dateFilter === 'month') {
+          const monthAgo = new Date()
+          monthAgo.setMonth(now.getMonth() - 1)
+          return photoDate >= monthAgo
+        }
+
+        return true
+      })
+  }, [photos, filterType, categoryFilter, searchQuery, dateFilter])
 
   const fetchAllPhotos = useCallback(async () => {
     try {
@@ -87,7 +128,8 @@ export default function GalleryPage() {
           ...photo,
           job_name: photo.jobs?.job_name,
           job_category: photo.jobs?.category,
-          uploader_avatar: profile?.avatar_url || null
+          uploader_avatar: profile?.avatar_url || null,
+          uploader_name: profile?.full_name || null
         }
       }) || []
 
@@ -122,6 +164,47 @@ export default function GalleryPage() {
 
     checkUser()
   }, [supabase, fetchAllPhotos])
+
+  // Reset/Sync edit fields when photo changes
+  useEffect(() => {
+    if (selectedPhoto) {
+      setEditCaption(selectedPhoto.caption || '')
+      setEditType(selectedPhoto.photo_type || 'progress')
+      setIsEditing(false)
+    }
+  }, [selectedPhoto])
+
+  const handleEditSave = async () => {
+    if (!selectedPhoto) return
+
+    try {
+      setIsSaving(true)
+      const { error } = await supabase
+        .from('job_photos')
+        .update({
+          caption: editCaption,
+          photo_type: editType
+        })
+        .eq('id', selectedPhoto.id)
+
+      if (error) throw error
+
+      // Update local state
+      setPhotos(prev => prev.map(p =>
+        p.id === selectedPhoto.id
+          ? { ...p, caption: editCaption, photo_type: editType }
+          : p
+      ))
+
+      setSelectedPhoto(prev => prev ? { ...prev, caption: editCaption, photo_type: editType } : null)
+      setIsEditing(false)
+    } catch (error) {
+      console.error('Error saving photo edits:', error)
+      alert('Failed to save changes. Please try again.')
+    } finally {
+      setIsSaving(false)
+    }
+  }
 
   if (loading) {
     return (
@@ -159,7 +242,7 @@ export default function GalleryPage() {
               <div>
                 <h1 className="text-2xl font-bold text-slate-900">Photo Gallery</h1>
                 <p className="text-slate-600 text-sm">
-                  {isAnyAdmin
+                  {userRoles.includes('rep') || isAnyAdmin
                     ? 'All company photos'
                     : 'Photos from your assigned jobs'
                   }
@@ -167,8 +250,30 @@ export default function GalleryPage() {
               </div>
             </div>
             <div className="flex items-center gap-3">
-              <div className="text-sm text-slate-500">
-                {photos.length} total photos
+              <div className="relative">
+                <input
+                  type="text"
+                  placeholder="Search jobs, captions, or names..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-64 pl-10 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-hidden focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all shadow-xs"
+                />
+                <svg className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                </svg>
+                {searchQuery && (
+                  <button
+                    onClick={() => setSearchQuery('')}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                  >
+                    <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+                    </svg>
+                  </button>
+                )}
+              </div>
+              <div className="text-sm text-slate-500 hidden sm:block">
+                {photos.length} total
               </div>
             </div>
           </div>
@@ -185,8 +290,8 @@ export default function GalleryPage() {
               <button
                 onClick={() => setFilterType('all')}
                 className={`px-4 py-2 rounded-lg font-semibold transition ${filterType === 'all'
-                    ? 'bg-indigo-600 text-white'
-                    : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                  ? 'bg-indigo-600 text-white'
+                  : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
                   }`}
               >
                 All Photos ({photos.length})
@@ -199,8 +304,8 @@ export default function GalleryPage() {
                     key={type}
                     onClick={() => setFilterType(type)}
                     className={`px-4 py-2 rounded-lg font-semibold transition capitalize ${filterType === type
-                        ? 'bg-indigo-600 text-white'
-                        : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                      ? 'bg-indigo-600 text-white'
+                      : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
                       }`}
                   >
                     {type} ({count})
@@ -209,13 +314,34 @@ export default function GalleryPage() {
               })}
             </div>
 
+            {/* Date Filter */}
+            <div className="flex flex-wrap gap-2">
+              {[
+                { label: 'All Time', value: 'all' },
+                { label: 'Today', value: 'today' },
+                { label: 'This Week', value: 'week' },
+                { label: 'This Month', value: 'month' }
+              ].map(date => (
+                <button
+                  key={date.value}
+                  onClick={() => setDateFilter(date.value)}
+                  className={`px-4 py-1.5 rounded-lg text-sm font-semibold transition ${dateFilter === date.value
+                    ? 'bg-slate-900 text-white shadow-md'
+                    : 'bg-white text-slate-600 border border-slate-200 hover:border-slate-300'
+                    }`}
+                >
+                  {date.label}
+                </button>
+              ))}
+            </div>
+
             {/* Category Filter */}
             <div className="flex flex-wrap gap-2">
               <button
                 onClick={() => setCategoryFilter('all')}
                 className={`px-4 py-2 rounded-lg font-semibold transition ${categoryFilter === 'all'
-                    ? 'bg-green-600 text-white'
-                    : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                  ? 'bg-green-600 text-white'
+                  : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
                   }`}
               >
                 All Categories ({photos.length})
@@ -228,8 +354,8 @@ export default function GalleryPage() {
                     key={category}
                     onClick={() => setCategoryFilter(category)}
                     className={`px-4 py-2 rounded-lg font-semibold transition ${categoryFilter === category
-                        ? 'bg-green-600 text-white'
-                        : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                      ? 'bg-green-600 text-white'
+                      : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
                       }`}
                   >
                     {category} ({count})
@@ -263,10 +389,10 @@ export default function GalleryPage() {
                   <div className="absolute top-2 left-2 flex flex-col gap-1">
                     {photo.photo_type && (
                       <span className={`px-2 py-1 text-xs font-semibold rounded-full ${photo.photo_type === 'before' ? 'bg-blue-500 text-white' :
-                          photo.photo_type === 'after' ? 'bg-green-500 text-white' :
-                            photo.photo_type === 'issue' ? 'bg-red-500 text-white' :
-                              photo.photo_type === 'completed' ? 'bg-purple-500 text-white' :
-                                'bg-slate-500 text-white'
+                        photo.photo_type === 'after' ? 'bg-green-500 text-white' :
+                          photo.photo_type === 'issue' ? 'bg-red-500 text-white' :
+                            photo.photo_type === 'completed' ? 'bg-purple-500 text-white' :
+                              'bg-slate-500 text-white'
                         }`}>
                         {photo.photo_type}
                       </span>
@@ -278,10 +404,10 @@ export default function GalleryPage() {
                     )}
                     {photo.job_category && (
                       <span className={`px-2 py-1 text-xs font-semibold rounded-full ${photo.job_category === 'Windows' ? 'bg-blue-600 text-white' :
-                          photo.job_category === 'Bathrooms' ? 'bg-green-600 text-white' :
-                            photo.job_category === 'Siding' ? 'bg-yellow-600 text-white' :
-                              photo.job_category === 'Doors' ? 'bg-purple-600 text-white' :
-                                'bg-slate-600 text-white'
+                        photo.job_category === 'Bathrooms' ? 'bg-green-600 text-white' :
+                          photo.job_category === 'Siding' ? 'bg-yellow-600 text-white' :
+                            photo.job_category === 'Doors' ? 'bg-purple-600 text-white' :
+                              'bg-slate-600 text-white'
                         }`}>
                         {photo.job_category}
                       </span>
@@ -407,10 +533,10 @@ export default function GalleryPage() {
                 <div className="flex items-center gap-2">
                   {selectedPhoto.photo_type && (
                     <span className={`px-3 py-1 text-sm font-semibold rounded-full ${selectedPhoto.photo_type === 'before' ? 'bg-blue-500 text-white' :
-                        selectedPhoto.photo_type === 'after' ? 'bg-green-500 text-white' :
-                          selectedPhoto.photo_type === 'issue' ? 'bg-red-500 text-white' :
-                            selectedPhoto.photo_type === 'completed' ? 'bg-purple-500 text-white' :
-                              'bg-slate-500 text-white'
+                      selectedPhoto.photo_type === 'after' ? 'bg-green-500 text-white' :
+                        selectedPhoto.photo_type === 'issue' ? 'bg-red-500 text-white' :
+                          selectedPhoto.photo_type === 'completed' ? 'bg-purple-500 text-white' :
+                            'bg-slate-500 text-white'
                       }`}>
                       {selectedPhoto.photo_type}
                     </span>
@@ -422,15 +548,26 @@ export default function GalleryPage() {
                   )}
                   {selectedPhoto.job_category && (
                     <span className={`px-3 py-1 text-sm font-semibold rounded-full ${selectedPhoto.job_category === 'Windows' ? 'bg-blue-600 text-white' :
-                        selectedPhoto.job_category === 'Bathrooms' ? 'bg-green-600 text-white' :
-                          selectedPhoto.job_category === 'Siding' ? 'bg-yellow-600 text-white' :
-                            selectedPhoto.job_category === 'Doors' ? 'bg-purple-600 text-white' :
-                              'bg-slate-600 text-white'
+                      selectedPhoto.job_category === 'Bathrooms' ? 'bg-green-600 text-white' :
+                        selectedPhoto.job_category === 'Siding' ? 'bg-yellow-600 text-white' :
+                          selectedPhoto.job_category === 'Doors' ? 'bg-purple-600 text-white' :
+                            'bg-slate-600 text-white'
                       }`}>
                       {selectedPhoto.job_category}
                     </span>
                   )}
                 </div>
+              </div>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => setIsEditing(!isEditing)}
+                  className={`text-sm font-medium px-3 py-1 rounded-md transition ${isEditing
+                    ? 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    : 'bg-indigo-50 text-indigo-600 hover:bg-indigo-100'
+                    }`}
+                >
+                  {isEditing ? 'Cancel' : 'Edit Photo'}
+                </button>
                 <div className="text-sm text-slate-500">
                   {(() => {
                     const currentIndex = filteredPhotos.findIndex(p => p.id === selectedPhoto.id)
@@ -438,25 +575,85 @@ export default function GalleryPage() {
                   })()}
                 </div>
               </div>
-
-              {selectedPhoto.caption && (
-                <p className="text-slate-700 mb-4">{selectedPhoto.caption}</p>
-              )}
-
-              {selectedPhoto.latitude && selectedPhoto.longitude && (
-                <a
-                  href={`https://www.google.com/maps?q=${selectedPhoto.latitude},${selectedPhoto.longitude}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition"
-                >
-                  <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-                    <path fillRule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clipRule="evenodd" />
-                  </svg>
-                  View on Map
-                </a>
-              )}
             </div>
+
+            {isEditing ? (
+              <div className="space-y-4 mb-4">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">
+                    Photo Type
+                  </label>
+                  <div className="flex flex-wrap gap-2">
+                    {['before', 'after', 'progress', 'issue', 'completed'].map(type => (
+                      <button
+                        key={type}
+                        onClick={() => setEditType(type)}
+                        className={`px-3 py-1 text-sm rounded-full border transition ${editType === type
+                          ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm'
+                          : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
+                          }`}
+                      >
+                        {type.charAt(0).toUpperCase() + type.slice(1)}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">
+                    Caption
+                  </label>
+                  <textarea
+                    value={editCaption}
+                    onChange={(e) => setEditCaption(e.target.value)}
+                    placeholder="Add a description..."
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-hidden h-24 resize-none"
+                  />
+                </div>
+                <div className="flex justify-end gap-2">
+                  <button
+                    onClick={() => setIsEditing(false)}
+                    className="px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 rounded-lg"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleEditSave}
+                    disabled={isSaving}
+                    className="px-4 py-2 text-sm font-medium bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 flex items-center gap-2"
+                  >
+                    {isSaving ? (
+                      <>
+                        <svg className="animate-spin h-4 w-4 text-white" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                        Saving...
+                      </>
+                    ) : 'Save Changes'}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <>
+                {selectedPhoto.caption && (
+                  <p className="text-slate-700 mb-4">{selectedPhoto.caption}</p>
+                )}
+              </>
+            )}
+
+            {selectedPhoto.latitude && selectedPhoto.longitude && (
+              <a
+                href={`https://www.google.com/maps?q=${selectedPhoto.latitude},${selectedPhoto.longitude}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition"
+              >
+                <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clipRule="evenodd" />
+                </svg>
+                View on Map
+              </a>
+            )}
           </div>
         </div>
       )}

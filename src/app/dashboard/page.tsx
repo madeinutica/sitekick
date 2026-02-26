@@ -1,13 +1,12 @@
 'use client'
 
 import { createClient } from '@/lib/supabase/client'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { useEffect, useState, useCallback, useRef } from 'react'
 import type { User } from '@supabase/supabase-js'
 import Link from 'next/link'
 import Image from 'next/image'
 import Map, { Marker } from 'react-map-gl/mapbox'
-import 'mapbox-gl/dist/mapbox-gl.css'
 
 type Job = {
   id: number
@@ -26,9 +25,14 @@ export const dynamic = 'force-dynamic'
 export default function DashboardPage() {
   const [user, setUser] = useState<User | null>(null)
   const [isSuperUser, setIsSuperUser] = useState(false)
+  const [isCompAdmin, setIsCompAdmin] = useState(false)
   const [userRoles, setUserRoles] = useState<string[]>([])
-  const [profile, setProfile] = useState<{ full_name: string | null; avatar_url: string | null } | null>(null)
+  const [profile, setProfile] = useState<{ full_name: string | null; avatar_url: string | null; company_id: string | null } | null>(null)
+  const [pendingRequestsCount, setPendingRequestsCount] = useState(0)
+  const [userJoinRequest, setUserJoinRequest] = useState<any>(null)
   const router = useRouter()
+  const searchParams = useSearchParams()
+  const companyIdParam = searchParams.get('companyId')
   const supabase = createClient()
   const dropdownRef = useRef<HTMLDivElement>(null)
   const [showAccountDropdown, setShowAccountDropdown] = useState(false)
@@ -36,12 +40,14 @@ export default function DashboardPage() {
   const [geocodedJobs, setGeocodedJobs] = useState<(Job & { latitude: number; longitude: number })[]>([])
   const [selectedJob, setSelectedJob] = useState<Job | null>(null)
   const [mapLoading, setMapLoading] = useState(true)
+  const [selectedCompanyId, setSelectedCompanyId] = useState<string | null>(null)
+  const [isGlobalAdmin, setIsGlobalAdmin] = useState(false)
 
   const fetchProfileData = useCallback(async (userId: string) => {
     // Get profile data
     const { data: profileData, error: profileError } = await supabase
       .from('profiles')
-      .select('full_name, avatar_url')
+      .select('full_name, avatar_url, company_id')
       .eq('id', userId)
       .maybeSingle()
 
@@ -59,8 +65,41 @@ export default function DashboardPage() {
 
     const roles = (userRolesData as unknown as { roles: { name: string } }[])?.map(ur => ur.roles?.name).filter(Boolean) || []
     setUserRoles(roles)
-    setIsSuperUser(roles.includes('super_admin'))
-  }, [supabase])
+    const globalAdmin = roles.includes('super_admin') || roles.includes('brand_ambassador')
+    setIsGlobalAdmin(globalAdmin)
+    const companyAdmin = roles.includes('company_admin')
+    setIsCompAdmin(companyAdmin)
+    const hasAdminRole = globalAdmin || companyAdmin
+    setIsSuperUser(hasAdminRole)
+
+    // Redirect Super Admins to the new dedicated dashboard
+    if (globalAdmin) {
+      router.push('/admin')
+      return
+    }
+
+    // If company admin, check for pending join requests
+    if (hasAdminRole && profileData?.company_id) {
+      const { count } = await supabase
+        .from('company_join_requests')
+        .select('*', { count: 'exact', head: true })
+        .eq('company_id', profileData.company_id)
+        .eq('status', 'pending')
+      setPendingRequestsCount(count || 0)
+    }
+
+    // If no company, check for own pending requests
+    if (!profileData?.company_id) {
+      const { data: requestData } = await supabase
+        .from('company_join_requests')
+        .select('*, companies(name)')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+      setUserJoinRequest(requestData)
+    }
+  }, [supabase, router, companyIdParam])
 
   const fetchJobs = useCallback(async (userId: string) => {
     setMapLoading(true)
@@ -85,39 +124,43 @@ export default function DashboardPage() {
     const isCompanyAdmin = roles.includes('company_admin')
 
     setIsSuperUser(isGlobalAdmin || isCompanyAdmin)
+    setIsGlobalAdmin(isGlobalAdmin)
 
     let query = supabase
       .from('jobs')
       .select('id, job_name, address, customer_name, status, category')
+      .eq('is_archived', false)
       .order('created_at', { ascending: false })
       .limit(50)
 
-    // RLS handles the permissions, but we filter for efficiency
-    if (!isGlobalAdmin) {
-      // First, get all job IDs the user is assigned to
-      const { data: assignments } = await supabase
-        .from('job_assignments')
-        .select('job_id')
-        .eq('user_id', userId)
+    if (!isGlobalAdmin && companyId) {
+      // If not super admin, always filter by own company
+      query = query.eq('company_id', companyId)
 
-      const assignedIds = assignments?.map((a: { job_id: number }) => a.job_id) || []
+      // If NOT company admin (e.g. Technician, Sales), restrict to assigned jobs
+      if (!isCompanyAdmin) {
+        const { data: assignments } = await supabase
+          .from('job_assignments')
+          .select('job_id')
+          .eq('user_id', userId)
 
-      // Build the OR filter: Company match OR Assigned match OR Creator match
-      let orFilter = `user_id.eq.${userId}`
-      if (companyId) {
-        orFilter = `company_id.eq.${companyId},${orFilter}`
+        const assignedJobIds = assignments?.map((a: { job_id: number }) => a.job_id) || []
+
+        // Filter jobs where ID is in assignments OR user is the creator (optional, keeping strict for now)
+        if (assignedJobIds.length > 0) {
+          query = query.in('id', assignedJobIds)
+        } else {
+          // If no assignments, show no jobs (or maybe just created ones? sticking to strict assignment for now)
+          // Using a condition that will return empty set
+          query = query.eq('id', -1)
+        }
       }
-      if (assignedIds.length > 0) {
-        orFilter = `${orFilter},id.in.(${assignedIds.join(',')})`
-      }
-
-      query = query.or(orFilter)
     }
 
     const { data: jobsData, error: jobsError } = await query
 
     if (jobsError) {
-      console.error('Jobs error:', jobsError)
+      console.error('Jobs error:', JSON.stringify(jobsError, null, 2))
     } else if (jobsData) {
       setJobs(jobsData)
       // Geocode jobs that have addresses
@@ -143,7 +186,7 @@ export default function DashboardPage() {
       setGeocodedJobs(jobsWithCoords)
     }
     setMapLoading(false)
-  }, [supabase])
+  }, [supabase, companyIdParam])
 
   useEffect(() => {
     const checkUser = async () => {
@@ -152,12 +195,21 @@ export default function DashboardPage() {
         router.push('/login')
       } else {
         setUser(data.user)
+
+        // Initialize company filter from localStorage
+        const savedCompany = localStorage.getItem('sitekick_selected_company_id')
+        setSelectedCompanyId(savedCompany)
+
         fetchProfileData(data.user.id)
         fetchJobs(data.user.id)
       }
     }
     checkUser()
-  }, [router, supabase, fetchProfileData])
+  }, [router, supabase, fetchProfileData, fetchJobs])
+
+  const handleCompanyChange = (companyId: string | null) => {
+    // Company selection removed for Super Users
+  }
 
   // Handle clicks outside dropdown to close it
   useEffect(() => {
@@ -186,6 +238,31 @@ export default function DashboardPage() {
     <div className="min-h-screen bg-linear-to-br from-light-gray via-white to-light-gray">
       {/* Header */}
       <header className="bg-white border-b border-slate-200 shadow-sm">
+        {/* Banner for Join Request Status */}
+        {!isGlobalAdmin && (!profile?.company_id || userJoinRequest?.status === 'pending') && (
+          <div className="bg-primary-red/5 border-b border-primary-red/10 overflow-hidden">
+            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-2">
+              <div className="flex items-center justify-between text-sm">
+                <div className="flex items-center space-x-2">
+                  <span className="flex h-2 w-2 rounded-full bg-primary-red"></span>
+                  <span className="text-slate-700">
+                    {userJoinRequest?.status === 'pending' ? (
+                      <>Waiting for approval from <strong>{userJoinRequest.companies.name}</strong></>
+                    ) : (
+                      "Set up your profile by joining a company to access job sites."
+                    )}
+                  </span>
+                </div>
+                <Link
+                  href="/join-company"
+                  className="font-semibold text-primary-red hover:text-primary-red-dark transition"
+                >
+                  {userJoinRequest?.status === 'pending' ? 'View Status' : 'Join a Company'} &rarr;
+                </Link>
+              </div>
+            </div>
+          </div>
+        )}
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-3">
@@ -197,105 +274,140 @@ export default function DashboardPage() {
                 className="h-12 w-auto"
               />
             </div>
-            <div className="flex items-center gap-3">
-              {/* Desktop Account Dropdown */}
-              <div className="hidden md:block relative" ref={dropdownRef}>
-                <button
-                  onClick={() => setShowAccountDropdown(!showAccountDropdown)}
-                  className="flex items-center gap-2 hover:bg-slate-50 rounded-lg px-3 py-2 transition"
-                >
-                  {profile?.avatar_url ? (
-                    <Image
-                      src={profile.avatar_url}
-                      alt="Profile"
-                      width={32}
-                      height={32}
-                      className="w-8 h-8 rounded-full object-cover"
-                      unoptimized
-                    />
-                  ) : (
-                    <div className="w-8 h-8 bg-primary-red-light rounded-full flex items-center justify-center">
-                      <svg className="w-5 h-5 text-primary-red" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-                      </svg>
-                    </div>
-                  )}
-                  <span className="text-sm font-medium text-slate-700">
-                    {profile?.full_name || 'Name'}
-                  </span>
-                  <svg className="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                  </svg>
-                </button>
-                {showAccountDropdown && (
-                  <div className="absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg border border-slate-200 py-1 z-50">
-                    <Link href="/profile" onClick={() => setShowAccountDropdown(false)} className="block px-4 py-2 text-sm text-slate-700 hover:bg-slate-50">
-                      Profile
-                    </Link>
-                    <Link href="/settings" onClick={() => setShowAccountDropdown(false)} className="block px-4 py-2 text-sm text-slate-700 hover:bg-slate-50">
-                      Settings
-                    </Link>
-                    <button
-                      onClick={() => {
-                        setShowAccountDropdown(false)
-                        handleSignOut()
-                      }}
-                      className="block w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
-                    >
-                      Sign Out
-                    </button>
-                  </div>
-                )}
-              </div>
+            <div className="flex items-center gap-4">
 
-              {/* Mobile Account Dropdown */}
-              <div className="md:hidden relative" ref={dropdownRef}>
-                <button
-                  onClick={() => setShowAccountDropdown(!showAccountDropdown)}
-                  className="flex items-center gap-2 hover:bg-slate-50 rounded-lg px-3 py-2 transition"
-                >
-                  {profile?.avatar_url ? (
-                    <Image
-                      src={profile.avatar_url}
-                      alt="Profile"
-                      width={32}
-                      height={32}
-                      className="w-8 h-8 rounded-full object-cover"
-                      unoptimized
-                    />
-                  ) : (
-                    <div className="w-8 h-8 bg-primary-red-light rounded-full flex items-center justify-center">
-                      <svg className="w-5 h-5 text-primary-red" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-                      </svg>
+              <div className="flex items-center gap-3">
+                {/* Desktop Account Dropdown */}
+                <div className="hidden md:block relative" ref={dropdownRef}>
+                  <button
+                    onClick={() => setShowAccountDropdown(!showAccountDropdown)}
+                    className="flex items-center gap-2 hover:bg-slate-50 rounded-lg px-3 py-2 transition"
+                  >
+                    {profile?.avatar_url ? (
+                      <Image
+                        src={profile.avatar_url}
+                        alt="Profile"
+                        width={32}
+                        height={32}
+                        className="w-8 h-8 rounded-full object-cover"
+                        unoptimized
+                      />
+                    ) : (
+                      <div className="w-8 h-8 bg-primary-red-light rounded-full flex items-center justify-center">
+                        <svg className="w-5 h-5 text-primary-red" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                        </svg>
+                      </div>
+                    )}
+                    <span className="text-sm font-medium text-slate-700">
+                      {profile?.full_name || 'Name'}
+                    </span>
+                    <svg className="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </button>
+                  {showAccountDropdown && (
+                    <div className="absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg border border-slate-200 py-1 z-50">
+                      {isGlobalAdmin ? (
+                        <Link href="/admin" onClick={() => setShowAccountDropdown(false)} className="block px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 flex items-center justify-between">
+                          <span>Admin Dashboard</span>
+                        </Link>
+                      ) : isCompAdmin ? (
+                        <Link href="/dashboard/user-management" onClick={() => setShowAccountDropdown(false)} className="block px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 flex items-center justify-between">
+                          <span>User Management</span>
+                          {pendingRequestsCount > 0 && (
+                            <span className="bg-primary-red text-white text-[10px] px-1.5 py-0.5 rounded-full font-bold">
+                              {pendingRequestsCount}
+                            </span>
+                          )}
+                        </Link>
+                      ) : null}
+                      <Link href="/profile" onClick={() => setShowAccountDropdown(false)} className="block px-4 py-2 text-sm text-slate-700 hover:bg-slate-50">
+                        Profile
+                      </Link>
+                      {!isGlobalAdmin && (
+                        <Link href="/settings" onClick={() => setShowAccountDropdown(false)} className="block px-4 py-2 text-sm text-slate-700 hover:bg-slate-50">
+                          Settings
+                        </Link>
+                      )}
+                      <button
+                        onClick={() => {
+                          setShowAccountDropdown(false)
+                          handleSignOut()
+                        }}
+                        className="block w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
+                      >
+                        Sign Out
+                      </button>
                     </div>
                   )}
-                  <span className="text-sm font-medium text-slate-700">
-                    {profile?.full_name || 'Name'}
-                  </span>
-                  <svg className="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                  </svg>
-                </button>
-                {showAccountDropdown && (
-                  <div className="absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg border border-slate-200 py-1 z-50">
-                    <Link href="/profile" onClick={() => setShowAccountDropdown(false)} className="block px-4 py-2 text-sm text-slate-700 hover:bg-slate-50">
-                      Profile
-                    </Link>
-                    <Link href="/settings" onClick={() => setShowAccountDropdown(false)} className="block px-4 py-2 text-sm text-slate-700 hover:bg-slate-50">
-                      Settings
-                    </Link>
-                    <button
-                      onClick={() => {
-                        setShowAccountDropdown(false)
-                        handleSignOut()
-                      }}
-                      className="block w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
-                    >
-                      Sign Out
-                    </button>
-                  </div>
-                )}
+                </div>
+
+                {/* Mobile Account Dropdown */}
+                <div className="md:hidden relative" ref={dropdownRef}>
+                  <button
+                    onClick={() => setShowAccountDropdown(!showAccountDropdown)}
+                    className="flex items-center gap-2 hover:bg-slate-50 rounded-lg px-3 py-2 transition"
+                  >
+                    {profile?.avatar_url ? (
+                      <Image
+                        src={profile.avatar_url}
+                        alt="Profile"
+                        width={32}
+                        height={32}
+                        className="w-8 h-8 rounded-full object-cover"
+                        unoptimized
+                      />
+                    ) : (
+                      <div className="w-8 h-8 bg-primary-red-light rounded-full flex items-center justify-center">
+                        <svg className="w-5 h-5 text-primary-red" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                        </svg>
+                      </div>
+                    )}
+                    <span className="text-sm font-medium text-slate-700">
+                      {profile?.full_name || 'Name'}
+                    </span>
+                    <svg className="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </button>
+                  {showAccountDropdown && (
+                    <div className="absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg border border-slate-200 py-1 z-50">
+                      {isGlobalAdmin ? (
+                        <Link href="/admin" onClick={() => setShowAccountDropdown(false)} className="block px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 flex items-center justify-between">
+                          <span>Admin Dashboard</span>
+                        </Link>
+                      ) : isCompAdmin ? (
+                        <Link href="/dashboard/user-management" onClick={() => setShowAccountDropdown(false)} className="block px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 flex items-center justify-between">
+                          <span>User Management</span>
+                          {pendingRequestsCount > 0 && (
+                            <span className="bg-primary-red text-white text-[10px] px-1.5 py-0.5 rounded-full font-bold">
+                              {pendingRequestsCount}
+                            </span>
+                          )}
+                        </Link>
+                      ) : null}
+                      <Link href="/profile" onClick={() => setShowAccountDropdown(false)} className="block px-4 py-2 text-sm text-slate-700 hover:bg-slate-50">
+                        Profile
+                      </Link>
+                      {!isGlobalAdmin && (
+                        <Link href="/settings" onClick={() => setShowAccountDropdown(false)} className="block px-4 py-2 text-sm text-slate-700 hover:bg-slate-50">
+                          Settings
+                        </Link>
+                      )}
+                      <button
+                        onClick={() => {
+                          setShowAccountDropdown(false)
+                          handleSignOut()
+                        }}
+                        className="block w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
+                      >
+                        Sign Out
+                      </button>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           </div>
@@ -412,8 +524,8 @@ export default function DashboardPage() {
                 </div>
               </Link>
 
-              {isSuperUser && (
-                <Link href="/admin">
+              {(isCompAdmin || isGlobalAdmin) && (
+                <Link href={selectedCompanyId ? `/dashboard/user-management?companyId=${selectedCompanyId}` : "/dashboard/user-management"}>
                   <div className="bg-white rounded-xl border border-slate-200 p-6 hover:shadow-md transition cursor-pointer">
                     <div className="flex items-center space-x-4">
                       <div className="w-12 h-12 bg-primary-red-light rounded-lg flex items-center justify-center">
@@ -430,18 +542,19 @@ export default function DashboardPage() {
                 </Link>
               )}
 
-              {isSuperUser && (
-                <Link href="/admin/marketsharp">
+              {(isCompAdmin || isGlobalAdmin) && (
+                <Link href={selectedCompanyId ? `/company/settings/integrations?companyId=${selectedCompanyId}` : "/company/settings/integrations"}>
                   <div className="bg-white rounded-xl border border-slate-200 p-6 hover:shadow-md transition cursor-pointer">
                     <div className="flex items-center space-x-4">
                       <div className="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center">
                         <svg className="w-6 h-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                         </svg>
                       </div>
                       <div>
-                        <h3 className="text-lg font-semibold text-slate-900">MarketSharp</h3>
-                        <p className="text-slate-600 text-sm">CRM sync & customer data</p>
+                        <h3 className="text-lg font-semibold text-slate-900">Company Settings</h3>
+                        <p className="text-slate-600 text-sm">CRM Integration & Config</p>
                       </div>
                     </div>
                   </div>

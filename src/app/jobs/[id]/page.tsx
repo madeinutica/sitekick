@@ -14,6 +14,8 @@ import 'mapbox-gl/dist/mapbox-gl.css'
 // Force dynamic rendering to avoid static generation issues
 export const dynamic = 'force-dynamic'
 
+import { syncPhotoToMarketSharp } from '@/app/actions/marketsharp-actions'
+
 // Clean job name by removing "Job-1", "Job1", "Job 1" etc. suffixes
 function cleanJobName(name: string): string {
   return name
@@ -54,28 +56,15 @@ function JobNotesSection({ jobId, user, jobOwnerId }: { jobId: string, user: Use
   // Fetch notes for this job
   const fetchNotes = useCallback(async () => {
     setLoading(true)
-    const { data, error } = await supabase
+    const { data: notesData, error } = await supabase
       .from('notes')
-      .select('id, user_id, content, created_at')
+      .select('*, profiles(full_name, avatar_url)')
       .eq('job_id', parseInt(jobId as string))
       .is('photo_id', null)
       .order('created_at', { ascending: false })
-    if (!error && data) {
-      // Fetch profile data separately for each note
-      const notesWithProfiles = await Promise.all(
-        data.map(async (note: NoteWithoutProfiles) => {
-          const { data: profile } = await supabase
-            .from('profiles')
-            .select('full_name, avatar_url')
-            .eq('id', note.user_id)
-            .maybeSingle()
-          return {
-            ...note,
-            profiles: profile
-          }
-        })
-      )
-      setNotes(notesWithProfiles)
+
+    if (!error && notesData) {
+      setNotes(notesData as Note[])
     }
     setLoading(false)
   }, [supabase, jobId])
@@ -104,7 +93,9 @@ function JobNotesSection({ jobId, user, jobOwnerId }: { jobId: string, user: Use
 
       const roles = (userRolesData as unknown as { roles: { name: string } }[])?.map(ur => ur.roles?.name).filter(Boolean) || []
       setUserRoles(roles)
-      setIsSuperUser(roles.includes('super_admin'))
+
+      const hasAdminRole = roles.includes('super_admin') || roles.includes('company_admin') || roles.includes('brand_ambassador')
+      setIsSuperUser(hasAdminRole)
 
       // Get project-specific roles for this job
       // Note: Project-specific roles have been simplified to use only global roles
@@ -176,10 +167,9 @@ function JobNotesSection({ jobId, user, jobOwnerId }: { jobId: string, user: Use
     return `${diffDays} day${diffDays === 1 ? '' : 's'} ago`
   }
 
-  // Check if user can comment (job owner, super admin, brand ambassador, or assigned users)
+  // Check if user can comment (job owner, super admin, company admin, brand ambassador, or assigned users)
   const canComment = isSuperUser ||
     (user && jobOwnerId && user.id === jobOwnerId) ||
-    userRoles.includes('brand_ambassador') ||
     userRoles.some(role => ['rep', 'measure_tech', 'installer'].includes(role))
 
   return (
@@ -274,7 +264,7 @@ function JobNotesSection({ jobId, user, jobOwnerId }: { jobId: string, user: Use
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
               </svg>
             </div>
-            <p className="text-sm text-slate-500">Only super users and the job owner can add comments</p>
+            <p className="text-sm text-slate-500">Only authorized users and the job owner can add comments</p>
           </div>
         </div>
       )}
@@ -356,6 +346,7 @@ export default function JobDetailPage() {
   const [assignedUsers, setAssignedUsers] = useState<{ id: string; full_name: string | null; avatar_url: string | null; role: string }[]>([])
   const [showAccountDropdown, setShowAccountDropdown] = useState(false)
   const [userRoles, setUserRoles] = useState<{ name: string }[]>([])
+  const [isGlobalAdmin, setIsGlobalAdmin] = useState(false)
   const [coordinates, setCoordinates] = useState<{ latitude: number; longitude: number } | null>(null)
   const [geocodingLoading, setGeocodingLoading] = useState(false)
   const [documents, setDocuments] = useState<JobDocument[]>([])
@@ -398,23 +389,50 @@ export default function JobDetailPage() {
     ? photos
     : photos.filter(photo => photo.photo_type === filterType)
 
-  const fetchJob = useCallback(async () => {
-    if (!jobId) return
-    const { data, error } = await supabase
+  const fetchJob = useCallback(async (roles?: { name: string }[]) => {
+    if (!jobId || !user) return
+    const { data: jobData, error } = await supabase
       .from('jobs')
       .select('*')
       .eq('id', parseInt(jobId as string))
-      .single()
+      .maybeSingle()
+
     if (error) {
       console.error(error)
-    } else {
-      setJob(data)
-      // Geocode the address if available
-      if (data.address) {
-        geocodeAddress(data.address)
+      return
+    }
+
+    if (!jobData) {
+      setJob(null)
+      return
+    }
+
+    // Security Check: If not an admin, verify assignment
+    const roleNames = roles?.map(r => r.name) || []
+    const hasAdminPrivileges = roleNames.some(role => ['super_admin', 'company_admin', 'brand_ambassador'].includes(role))
+
+    if (!hasAdminPrivileges) {
+      const { data: assignment, error: assignmentError } = await supabase
+        .from('job_assignments')
+        .select('id')
+        .eq('job_id', jobData.id)
+        .eq('user_id', user.id)
+        .maybeSingle()
+
+      if (!assignment || assignmentError) {
+        // Not assigned and not an admin - redirect or show error
+        console.warn('Unauthorized access attempt to job:', jobId)
+        router.push('/jobs')
+        return
       }
     }
-  }, [supabase, jobId])
+
+    setJob(jobData)
+    // Geocode the address if available
+    if (jobData.address) {
+      geocodeAddress(jobData.address)
+    }
+  }, [supabase, jobId, user, router])
 
   const fetchPhotos = useCallback(async () => {
     if (!jobId) return
@@ -460,60 +478,82 @@ export default function JobDetailPage() {
 
   useEffect(() => {
     const checkUser = async () => {
-      const { data } = await supabase.auth.getUser()
-      if (!data.user) {
+      const { data: userData } = await supabase.auth.getUser()
+      if (!userData.user) {
         router.push('/login')
-      } else {
-        setUser(data.user)
-        fetchJob()
-        fetchPhotos()
-        fetchDocuments()
+        return
+      }
 
-        // Get profile data and check if super user
-        const { data: profileData } = await supabase
-          .from('profiles')
-          .select('full_name, avatar_url, is_super_user')
-          .eq('id', data.user.id)
-          .maybeSingle()
+      // Only update user state if it's actually different to avoid loops
+      setUser(prev => (prev?.id === userData.user?.id ? prev : userData.user))
 
-        if (profileData) {
-          setProfile(profileData)
+      // Get profile data and check if super user
+      const { data: profileData } = await supabase
+        .from('profiles')
+        .select('full_name, avatar_url, is_super_user')
+        .eq('id', userData.user.id)
+        .maybeSingle()
 
-          // Get user roles
-          const { data: userRolesData } = await supabase
-            .from('user_roles')
-            .select('roles(name)')
-            .eq('user_id', data.user.id)
+      if (profileData) {
+        setProfile(profileData)
 
-          const roles = (userRolesData as unknown as { roles: { name: string } }[])?.map(ur => ur.roles).filter(Boolean) || []
-          setUserRoles(roles)
+        // Get user roles
+        const { data: userRolesData } = await supabase
+          .from('user_roles')
+          .select('roles(name)')
+          .eq('user_id', userData.user.id)
 
-          // Get project-specific roles for this job
-          // Note: Project-specific roles have been simplified to use only global roles
+        const roles = (userRolesData as unknown as { roles: { name: string } }[])?.map(ur => ur.roles).filter(Boolean) || []
 
-          // If super user or has appropriate roles, fetch all users for assignment
-          if (profileData.is_super_user || roles.some(role => role.name === 'super_admin')) {
-            const { data: usersData } = await supabase
-              .from('profiles')
-              .select('id, full_name')
-              .order('full_name')
-            if (usersData) {
-              setUsers(usersData.map((profile: Profile) => ({
-                id: profile.id,
-                full_name: profile.full_name,
-                email: '' // Email not accessible client-side
-              })))
-            }
+        // Deep compare roles to avoid unnecessary updates
+        setUserRoles(prev => {
+          const prevNames = prev.map(r => r.name).sort().join(',')
+          const currentNames = roles.map(r => r.name).sort().join(',')
+          return prevNames === currentNames ? prev : roles
+        })
+
+        setIsGlobalAdmin(roles.some(r => ['super_admin', 'brand_ambassador'].includes(r.name)))
+
+        // If super user or has appropriate roles, fetch all users for assignment
+        const canAssign = profileData.is_super_user || roles.some(role => ['super_admin', 'company_admin', 'brand_ambassador'].includes(role.name))
+        if (canAssign) {
+          const { data: usersData } = await supabase
+            .from('profiles')
+            .select('id, full_name')
+            .order('full_name')
+          if (usersData) {
+            setUsers(usersData.map((profile: Profile) => ({
+              id: profile.id,
+              full_name: profile.full_name,
+              email: '' // Email not accessible client-side
+            })))
           }
         }
       }
     }
     checkUser()
-  }, [router, supabase, fetchJob, fetchPhotos, fetchDocuments, jobId])
+  }, [router, supabase])
+
+  // Independent data fetching effects
+  useEffect(() => {
+    if (userRoles.length > 0) {
+      fetchJob(userRoles)
+    }
+  }, [fetchJob, userRoles])
+
+  useEffect(() => {
+    fetchPhotos()
+  }, [fetchPhotos])
+
+  useEffect(() => {
+    fetchDocuments()
+  }, [fetchDocuments])
+
 
   // Fetch assigned users with their roles
   useEffect(() => {
-    if (jobId && userRoles.some(role => role.name === 'super_admin')) {
+    const hasAdminPrivileges = userRoles.some(role => ['super_admin', 'company_admin', 'brand_ambassador'].includes(role.name))
+    if (jobId && hasAdminPrivileges) {
       const fetchAssignedUsers = async () => {
         const { data } = await supabase
           .from('job_assignments')
@@ -546,7 +586,14 @@ export default function JobDetailPage() {
               }
             })
           )
-          setAssignedUsers(assignedUsersData)
+
+          // Only update if content changed or is empty
+          setAssignedUsers(prev => {
+            const prevIds = prev.map(u => u.id).sort().join(',')
+            const currentIds = assignedUsersData.map(u => u.id).sort().join(',')
+            if (prevIds === currentIds && prev.length > 0) return prev
+            return assignedUsersData
+          })
         }
       }
       fetchAssignedUsers()
@@ -714,6 +761,18 @@ export default function JobDetailPage() {
         if (insertError) {
           throw new Error(`Database insert failed: ${insertError.message}`)
         }
+
+        // Trigger background sync to MarketSharp
+        supabase
+          .from('job_photos')
+          .select('id')
+          .eq('image_url', publicUrl)
+          .single()
+          .then(({ data: newPhoto }: { data: any }) => {
+            if (newPhoto?.id) {
+              syncPhotoToMarketSharp(newPhoto.id).catch(e => console.error('Background sync failed:', e))
+            }
+          })
       } else {
         // Desktop: Run resize and location in parallel
         const [uploadBlob, location] = await Promise.all([
@@ -750,6 +809,18 @@ export default function JobDetailPage() {
         if (insertError) {
           throw new Error(`Database insert failed: ${insertError.message}`)
         }
+
+        // Trigger background sync to MarketSharp
+        supabase
+          .from('job_photos')
+          .select('id')
+          .eq('image_url', publicUrl)
+          .single()
+          .then(({ data: newPhoto }: { data: any }) => {
+            if (newPhoto?.id) {
+              syncPhotoToMarketSharp(newPhoto.id).catch(e => console.error('Background sync failed:', e))
+            }
+          })
       }
 
       // Replace optimistic photo with real data
@@ -1064,15 +1135,17 @@ export default function JobDetailPage() {
                           Profile
                         </div>
                       </Link>
-                      <Link href="/settings" onClick={() => setShowAccountDropdown(false)}>
-                        <div className="px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 cursor-pointer flex items-center gap-2">
-                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                          </svg>
-                          Settings
-                        </div>
-                      </Link>
+                      {!isGlobalAdmin && (
+                        <Link href="/settings" onClick={() => setShowAccountDropdown(false)}>
+                          <div className="px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 cursor-pointer flex items-center gap-2">
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                            </svg>
+                            Settings
+                          </div>
+                        </Link>
+                      )}
                       <button
                         onClick={() => {
                           setShowAccountDropdown(false)
@@ -1176,7 +1249,7 @@ export default function JobDetailPage() {
                             {job.category}
                           </span>
                         )}
-                        {(userRoles.some(role => role.name === 'super_admin')) && (
+                        {(userRoles.some(role => ['super_admin', 'company_admin', 'brand_ambassador'].includes(role.name))) && (
                           <button
                             onClick={startEditCategory}
                             className="p-1 text-slate-400 hover:text-slate-600 transition"
@@ -1194,8 +1267,18 @@ export default function JobDetailPage() {
               )}
               {job.address && !editingAddress && (
                 <div className="flex items-center justify-center gap-2 mt-1">
-                  <p className="text-sm text-slate-600">{job.address}</p>
-                  {(userRoles.some(role => role.name === 'super_admin')) && (
+                  <a
+                    href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(job.address)}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-sm text-slate-600 hover:text-primary-red transition flex items-center gap-1"
+                  >
+                    <svg className="w-3 h-3 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clipRule="evenodd" />
+                    </svg>
+                    {job.address}
+                  </a>
+                  {(userRoles.some(role => ['super_admin', 'company_admin', 'brand_ambassador'].includes(role.name))) && (
                     <button
                       onClick={startEditAddress}
                       className="p-1 text-slate-400 hover:text-slate-600 transition"
@@ -1236,7 +1319,7 @@ export default function JobDetailPage() {
                   </div>
                 </div>
               )}
-              {!job.address && !editingAddress && (userRoles.some(role => role.name === 'super_admin')) && (
+              {!job.address && !editingAddress && (userRoles.some(role => ['super_admin', 'company_admin', 'brand_ambassador'].includes(role.name))) && (
                 <button
                   onClick={startEditAddress}
                   className="text-sm text-slate-400 hover:text-slate-600 transition flex items-center justify-center gap-1 mt-1"
@@ -1248,7 +1331,7 @@ export default function JobDetailPage() {
                 </button>
               )}
               {/* Assignment Section - Mobile */}
-              {(userRoles.some(role => role.name === 'super_admin')) && (
+              {(userRoles.some(role => ['super_admin', 'company_admin', 'brand_ambassador'].includes(role.name))) && (
                 <div className="mt-2">
                   {editingAssignments ? (
                     <div className="space-y-2">
@@ -1391,9 +1474,33 @@ export default function JobDetailPage() {
                     </div>
                   ) : (
                     <div className="flex items-center justify-center gap-2 mt-1">
-                      <span className="text-sm text-slate-600">
-                        Assigned: {assignedUsers.length > 0 ? assignedUsers.map(u => u.full_name).filter(Boolean).join(', ') : 'Unassigned'}
-                      </span>
+                      <span className="text-sm font-medium text-slate-700">Assigned Staff:</span>
+                      {assignedUsers.length > 0 ? (
+                        <div className="flex -space-x-2 mr-1">
+                          {assignedUsers.map((u) => (
+                            <div key={u.id} title={u.full_name || 'Staff'}>
+                              {u.avatar_url ? (
+                                <Image
+                                  src={u.avatar_url}
+                                  alt={u.full_name || 'Avatar'}
+                                  width={24}
+                                  height={24}
+                                  className="w-6 h-6 rounded-full border-2 border-white object-cover"
+                                  unoptimized
+                                />
+                              ) : (
+                                <div className="w-6 h-6 bg-primary-red-light rounded-full border-2 border-white flex items-center justify-center">
+                                  <span className="text-[10px] text-primary-red font-bold">
+                                    {(u.full_name || '?').charAt(0).toUpperCase()}
+                                  </span>
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <span className="text-sm text-slate-600">Unassigned</span>
+                      )}
                       <button
                         onClick={startEditAssignment}
                         className="p-1 text-slate-400 hover:text-slate-600 transition"
@@ -1452,7 +1559,7 @@ export default function JobDetailPage() {
                   <div>
                     <div className="flex items-center gap-2">
                       <h1 className="text-xl font-bold text-slate-900">{cleanJobName(job.job_name)}</h1>
-                      {(userRoles.some(role => role.name === 'super_admin')) && (
+                      {(userRoles.some(role => ['super_admin', 'company_admin', 'brand_ambassador'].includes(role.name))) && (
                         <button
                           onClick={startEditJobName}
                           className="p-1 text-slate-400 hover:text-slate-600 transition"
@@ -1505,7 +1612,7 @@ export default function JobDetailPage() {
                               {job.category}
                             </span>
                           )}
-                          {(userRoles.some(role => role.name === 'super_admin')) && (
+                          {(userRoles.some(role => ['super_admin', 'company_admin', 'brand_ambassador'].includes(role.name))) && (
                             <button
                               onClick={startEditCategory}
                               className="p-1 text-slate-400 hover:text-slate-600 transition"
@@ -1523,8 +1630,18 @@ export default function JobDetailPage() {
                 )}
                 {job.address && !editingAddress && (
                   <div className="flex items-center gap-2">
-                    <p className="text-sm text-slate-600">{job.address}</p>
-                    {(userRoles.some(role => role.name === 'super_admin')) && (
+                    <a
+                      href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(job.address)}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-sm text-slate-600 hover:text-primary-red transition flex items-center gap-1"
+                    >
+                      <svg className="w-3 h-3 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clipRule="evenodd" />
+                      </svg>
+                      {job.address}
+                    </a>
+                    {(userRoles.some(role => ['super_admin', 'company_admin', 'brand_ambassador'].includes(role.name))) && (
                       <button
                         onClick={startEditAddress}
                         className="p-1 text-slate-400 hover:text-slate-600 transition"
@@ -1565,7 +1682,7 @@ export default function JobDetailPage() {
                     </div>
                   </div>
                 )}
-                {!job.address && !editingAddress && (userRoles.some(role => role.name === 'super_admin')) && (
+                {!job.address && !editingAddress && (userRoles.some(role => ['super_admin', 'company_admin', 'brand_ambassador'].includes(role.name))) && (
                   <button
                     onClick={startEditAddress}
                     className="text-sm text-slate-400 hover:text-slate-600 transition flex items-center gap-1"
@@ -1577,7 +1694,7 @@ export default function JobDetailPage() {
                   </button>
                 )}
                 {/* Assignment Section - Desktop */}
-                {(userRoles.some(role => role.name === 'super_admin')) && (
+                {(userRoles.some(role => ['super_admin', 'company_admin', 'brand_ambassador'].includes(role.name))) && (
                   <div className="mt-1">
                     {editingAssignments ? (
                       <div className="space-y-2">
@@ -1640,8 +1757,8 @@ export default function JobDetailPage() {
                                     .insert(assignments)
 
                                   if (insertError) {
-                                    console.error('Insert error:', insertError)
-                                    alert(`Failed to insert new assignments: ${insertError.message}`)
+                                    console.error('Insert error details:', JSON.stringify(insertError, null, 2))
+                                    alert(`Failed to insert new assignments: ${insertError.message || 'Check console for details'}`)
                                     setSaving(false)
                                     return
                                   }
@@ -1720,9 +1837,33 @@ export default function JobDetailPage() {
                       </div>
                     ) : (
                       <div className="flex items-center gap-2">
-                        <span className="text-sm text-slate-600">
-                          Assigned: {assignedUsers.length > 0 ? assignedUsers.map(u => u.full_name).filter(Boolean).join(', ') : 'Unassigned'}
-                        </span>
+                        <span className="text-sm font-medium text-slate-700">Assigned Staff:</span>
+                        {assignedUsers.length > 0 ? (
+                          <div className="flex -space-x-2 mr-1">
+                            {assignedUsers.map((u) => (
+                              <div key={u.id} title={u.full_name || 'Staff'}>
+                                {u.avatar_url ? (
+                                  <Image
+                                    src={u.avatar_url}
+                                    alt={u.full_name || 'Avatar'}
+                                    width={24}
+                                    height={24}
+                                    className="w-6 h-6 rounded-full border-2 border-white object-cover"
+                                    unoptimized
+                                  />
+                                ) : (
+                                  <div className="w-6 h-6 bg-primary-red-light rounded-full border-2 border-white flex items-center justify-center">
+                                    <span className="text-[10px] text-primary-red font-bold">
+                                      {(u.full_name || '?').charAt(0).toUpperCase()}
+                                    </span>
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <span className="text-sm text-slate-600">Unassigned</span>
+                        )}
                         <button
                           onClick={startEditAssignment}
                           className="p-1 text-slate-400 hover:text-slate-600 transition"
@@ -1760,7 +1901,7 @@ export default function JobDetailPage() {
                   {profile?.full_name || 'Name'}
                 </span>
               </Link>
-              {userRoles.some(role => role.name === 'super_admin') && (
+              {(userRoles.some(role => ['super_admin', 'company_admin', 'brand_ambassador'].includes(role.name))) && (
                 <button
                   onClick={handleDeleteJob}
                   className="px-4 py-2 text-sm font-medium text-primary-red hover:text-primary-red-dark hover:bg-primary-red-light rounded-lg transition flex items-center space-x-1"
@@ -2124,7 +2265,17 @@ export default function JobDetailPage() {
           <div className="bg-white rounded-xl p-6 mb-6 shadow-md hover:shadow-xl transition-shadow duration-300 border border-slate-100">
             <h3 className="text-lg font-semibold text-slate-900 mb-4">Location</h3>
             <div className="space-y-4">
-              <p className="text-slate-700">{job.address}</p>
+              <a
+                href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(job.address)}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-slate-700 hover:text-primary-red transition flex items-center gap-1"
+              >
+                <svg className="w-4 h-4 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clipRule="evenodd" />
+                </svg>
+                {job.address}
+              </a>
               {coordinates ? (
                 <div className="h-64 rounded-lg overflow-hidden border border-slate-200">
                   <Map
@@ -2142,11 +2293,23 @@ export default function JobDetailPage() {
                       longitude={coordinates.longitude}
                       anchor="bottom"
                     >
-                      <div className="w-6 h-6 bg-primary-red rounded-full border-2 border-white shadow-lg flex items-center justify-center">
-                        <svg className="w-4 h-4 text-white" fill="currentColor" viewBox="0 0 20 20">
-                          <path fillRule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clipRule="evenodd" />
-                        </svg>
-                      </div>
+                      <a
+                        href={`https://www.google.com/maps/search/?api=1&query=${coordinates.latitude},${coordinates.longitude}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="cursor-pointer hover:scale-110 transition-transform flex flex-col items-center group relative"
+                        title="Navigate to Job"
+                      >
+                        <div className="w-6 h-6 bg-primary-red rounded-full border-2 border-white shadow-lg flex items-center justify-center">
+                          <svg className="w-4 h-4 text-white" fill="currentColor" viewBox="0 0 20 20">
+                            <path fillRule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clipRule="evenodd" />
+                          </svg>
+                        </div>
+                        <div className="absolute bottom-full mb-2 bg-slate-900 text-white text-[10px] px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none">
+                          Navigate to Job
+                          <div className="absolute top-full left-1/2 -translate-x-1/2 w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent border-t-slate-900"></div>
+                        </div>
+                      </a>
                     </Marker>
                   </Map>
                 </div>
@@ -2330,7 +2493,7 @@ export default function JobDetailPage() {
                           </span>
                         )}
                       </div>
-                      {(userRoles.some(role => role.name === 'super_admin')) && (
+                      {((userRoles.some(role => ['super_admin', 'company_admin', 'brand_ambassador'].includes(role.name)))) && (
                         <button
                           onClick={(e) => {
                             e.preventDefault()
@@ -2493,7 +2656,7 @@ export default function JobDetailPage() {
                       >
                         Download
                       </button>
-                      {(userRoles.some(role => role.name === 'super_admin')) && (
+                      {((userRoles.some(role => ['super_admin', 'company_admin', 'brand_ambassador'].includes(role.name)))) && (
                         <button
                           onClick={(e) => handleDeleteDocument(document.id, e)}
                           className="p-1 text-slate-400 hover:text-red-600 transition"

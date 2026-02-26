@@ -235,7 +235,7 @@ export default function MarketSharpPage() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
           <div className="flex justify-between items-center">
             <div className="flex items-center gap-4">
-              <Link href="/admin" className="text-gray-600 hover:text-gray-900">
+              <Link href="/admin/dashboard" className="text-gray-600 hover:text-gray-900">
                 <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
                 </svg>
@@ -308,11 +308,10 @@ export default function MarketSharpPage() {
               <button
                 key={tab}
                 onClick={() => setActiveTab(tab)}
-                className={`py-3 px-1 border-b-2 text-sm font-medium capitalize transition ${
-                  activeTab === tab
+                className={`py-3 px-1 border-b-2 text-sm font-medium capitalize transition ${activeTab === tab
                     ? 'border-red-500 text-red-600'
                     : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                }`}
+                  }`}
               >
                 {tab}
               </button>
@@ -382,11 +381,10 @@ export default function MarketSharpPage() {
             {/* Sync Status */}
             <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
               <div className="flex items-center gap-3">
-                <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
-                  lastSync?.status === 'success' ? 'bg-green-100' :
-                  lastSync?.status === 'partial' ? 'bg-yellow-100' :
-                  lastSync?.status === 'failed' ? 'bg-red-100' : 'bg-gray-100'
-                }`}>
+                <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${lastSync?.status === 'success' ? 'bg-green-100' :
+                    lastSync?.status === 'partial' ? 'bg-yellow-100' :
+                      lastSync?.status === 'failed' ? 'bg-red-100' : 'bg-gray-100'
+                  }`}>
                   {lastSync?.status === 'success' ? (
                     <svg className="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
@@ -507,12 +505,11 @@ export default function MarketSharpPage() {
                         <td className="px-4 py-3 text-sm text-gray-600">{job.job_type || '—'}</td>
                         <td className="px-4 py-3">
                           {job.category && (
-                            <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
-                              job.category === 'Windows' ? 'bg-blue-100 text-blue-800' :
-                              job.category === 'Bathrooms' ? 'bg-green-100 text-green-800' :
-                              job.category === 'Siding' ? 'bg-yellow-100 text-yellow-800' :
-                              job.category === 'Doors' ? 'bg-purple-100 text-purple-800' : 'bg-gray-100 text-gray-800'
-                            }`}>
+                            <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${job.category === 'Windows' ? 'bg-blue-100 text-blue-800' :
+                                job.category === 'Bathrooms' ? 'bg-green-100 text-green-800' :
+                                  job.category === 'Siding' ? 'bg-yellow-100 text-yellow-800' :
+                                    job.category === 'Doors' ? 'bg-purple-100 text-purple-800' : 'bg-gray-100 text-gray-800'
+                              }`}>
                               {job.category}
                             </span>
                           )}
@@ -553,11 +550,10 @@ export default function MarketSharpPage() {
                 <div key={log.id} className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
                   <div className="flex items-center justify-between mb-3">
                     <div className="flex items-center gap-3">
-                      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                        log.status === 'success' ? 'bg-green-100 text-green-800' :
-                        log.status === 'partial' ? 'bg-yellow-100 text-yellow-800' :
-                        log.status === 'failed' ? 'bg-red-100 text-red-800' : 'bg-gray-100 text-gray-800'
-                      }`}>
+                      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${log.status === 'success' ? 'bg-green-100 text-green-800' :
+                          log.status === 'partial' ? 'bg-yellow-100 text-yellow-800' :
+                            log.status === 'failed' ? 'bg-red-100 text-red-800' : 'bg-gray-100 text-gray-800'
+                        }`}>
                         {log.status}
                       </span>
                       <span className="text-sm text-gray-500">
