@@ -27,6 +27,8 @@ type Job = {
   created_at: string
   user_id: string
   status?: string
+  sale_date?: string
+  completed_date?: string
   customer_name?: string
   contract_balance_due?: number
   profiles?: { full_name: string | null; avatar_url: string | null }
@@ -57,8 +59,33 @@ export default function JobsPage() {
   const [isGlobalAdmin, setIsGlobalAdmin] = useState(false)
   const [isCompAdmin, setIsCompAdmin] = useState(false)
 
-  // Filter jobs based on selected category, status, and search query
-  const filteredJobs = jobs.filter(job => {
+  // 1. First, define the core "Active Pool" based on recency and sale date existence
+  const soldRecentJobs = jobs.filter(job => {
+    const isCompleted = ['installed', 'completed', 'closed'].includes(job.status?.toLowerCase() || '')
+    const now = new Date().getTime()
+    const ninetyDaysAgo = now - (90 * 24 * 60 * 60 * 1000)
+    const thirtyDaysAgo = now - (30 * 24 * 60 * 60 * 1000)
+
+    // Robust Date Extraction
+    const createdDate = new Date(job.created_at).getTime()
+    const saleDate = job.sale_date ? new Date(job.sale_date).getTime() : null
+    const completedDate = job.completed_date ? new Date(job.completed_date).getTime() : null
+
+    // 0. Existence & Hard Cutoff: Must have a sale date and it must be within 90 days
+    if (!saleDate || saleDate < ninetyDaysAgo) return false
+
+    // 2. Completion Cutoff: If completed, must be under 30 days
+    if (isCompleted) {
+      // Use completed_date first, then fall back to sale_date or created_at
+      const relevantCompletionStamp = completedDate || saleDate || createdDate
+      if (relevantCompletionStamp < thirtyDaysAgo) return false
+    }
+
+    return true
+  })
+
+  // 2. Then apply the UI filters (Category, Search) on the Active Pool
+  const filteredJobs = soldRecentJobs.filter(job => {
     const matchesCategory = categoryFilter === 'all' || job.category === categoryFilter
     const matchesStatus = statusFilter === 'all' ||
       (statusFilter === 'completed' && ['installed', 'completed', 'closed'].includes(job.status?.toLowerCase() || '')) ||
@@ -503,7 +530,7 @@ export default function JobsPage() {
                 <div>
                   <h2 className="text-2xl font-bold text-slate-900">Your Jobs</h2>
                   <p className="text-slate-600 text-sm mt-1">
-                    {filteredJobs.length} of {jobs.length} total jobs
+                    {filteredJobs.length} of {soldRecentJobs.length} total jobs
                     {categoryFilter !== 'all' && (
                       <span className="ml-2 text-primary-red">
                         (filtered by {categoryFilter})
@@ -551,11 +578,11 @@ export default function JobsPage() {
                         onChange={(e) => setCategoryFilter(e.target.value)}
                         className="appearance-none bg-white border border-slate-300 rounded-lg px-4 py-2 pr-8 text-sm focus:outline-none focus:ring-2 focus:ring-primary-red focus:border-transparent"
                       >
-                        <option value="all">All Categories ({jobs.length})</option>
-                        <option value="Windows">Windows ({jobs.filter(job => job.category === 'Windows').length})</option>
-                        <option value="Bathrooms">Bathrooms ({jobs.filter(job => job.category === 'Bathrooms').length})</option>
-                        <option value="Siding">Siding ({jobs.filter(job => job.category === 'Siding').length})</option>
-                        <option value="Doors">Doors ({jobs.filter(job => job.category === 'Doors').length})</option>
+                        <option value="all">All Categories ({soldRecentJobs.length})</option>
+                        <option value="Windows">Windows ({soldRecentJobs.filter(job => job.category === 'Windows').length})</option>
+                        <option value="Bathrooms">Bathrooms ({soldRecentJobs.filter(job => job.category === 'Bathrooms').length})</option>
+                        <option value="Siding">Siding ({soldRecentJobs.filter(job => job.category === 'Siding').length})</option>
+                        <option value="Doors">Doors ({soldRecentJobs.filter(job => job.category === 'Doors').length})</option>
                       </select>
                       <div className="absolute inset-y-0 right-0 flex items-center px-2 pointer-events-none">
                         <svg className="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -744,22 +771,22 @@ export default function JobsPage() {
                   >
                     <div className="flex items-start space-x-4">
                       {/* Assigned Users Avatars or Default Icon */}
-                      <div className="w-12 h-12 shrink-0">
+                      <div className="shrink-0">
                         {job.assignedUsers && job.assignedUsers.length > 0 ? (
-                          <div className="flex -space-x-1">
+                          <div className="flex -space-x-2">
                             {job.assignedUsers.slice(0, 3).map((assignedUser) => (
-                              <div key={assignedUser.id} className="relative">
+                              <div key={assignedUser.id} className="relative flex-none">
                                 {assignedUser.avatar_url ? (
                                   <Image
                                     src={assignedUser.avatar_url}
                                     alt={assignedUser.full_name || 'User'}
                                     width={32}
                                     height={32}
-                                    className="w-8 h-8 rounded-full border-2 border-white object-cover"
+                                    className="w-8 h-8 rounded-full border-2 border-white object-cover shrink-0"
                                   />
                                 ) : (
-                                  <div className="w-8 h-8 bg-primary-red-light rounded-full border-2 border-white flex items-center justify-center">
-                                    <svg className="w-4 h-4 text-primary-red" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <div className="w-8 h-8 bg-primary-red-light rounded-full border-2 border-white flex items-center justify-center shrink-0">
+                                    <svg className="w-4 h-4 text-primary-red flex-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
                                     </svg>
                                   </div>
@@ -767,13 +794,13 @@ export default function JobsPage() {
                               </div>
                             ))}
                             {job.assignedUsers.length > 3 && (
-                              <div className="w-8 h-8 bg-slate-200 rounded-full border-2 border-white flex items-center justify-center">
+                              <div className="w-8 h-8 bg-slate-200 rounded-full border-2 border-white flex items-center justify-center flex-none">
                                 <span className="text-xs font-medium text-slate-600">+{job.assignedUsers.length - 3}</span>
                               </div>
                             )}
                           </div>
                         ) : (
-                          <div className="w-12 h-12 bg-primary-red-light rounded-lg flex items-center justify-center">
+                          <div className="w-12 h-12 bg-primary-red-light rounded-lg flex items-center justify-center shrink-0">
                             <svg className="w-6 h-6 text-primary-red" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                             </svg>
@@ -796,23 +823,23 @@ export default function JobsPage() {
                           )}
                         </div>
                         <div className="mt-2 flex items-center justify-between">
-                          {job.assignedUsers && job.assignedUsers.length > 0 ? (
+                          {job.assignedUsers && job.assignedUsers.length > 0 && (
                             <div className="flex items-center gap-2">
                               <span className="text-[10px] font-medium text-slate-500 uppercase tracking-wider">Staff:</span>
-                              <div className="flex -space-x-2">
+                              <div className="flex -space-x-2 flex-grow overflow-hidden">
                                 {job.assignedUsers.map((u) => (
-                                  <div key={u.id} title={u.full_name || 'Staff'}>
+                                  <div key={u.id} title={u.full_name || 'Staff'} className="flex-none">
                                     {u.avatar_url ? (
                                       <Image
                                         src={u.avatar_url}
                                         alt={u.full_name || 'Avatar'}
                                         width={24}
                                         height={24}
-                                        className="w-6 h-6 rounded-full border-2 border-white object-cover"
+                                        className="w-6 h-6 rounded-full border-2 border-white object-cover shrink-0"
                                         unoptimized
                                       />
                                     ) : (
-                                      <div className="w-6 h-6 bg-primary-red-light rounded-full border-2 border-white flex items-center justify-center">
+                                      <div className="w-6 h-6 bg-primary-red-light rounded-full border-2 border-white flex items-center justify-center shrink-0">
                                         <span className="text-[10px] text-primary-red font-bold">
                                           {(u.full_name || '?').charAt(0).toUpperCase()}
                                         </span>
@@ -822,10 +849,13 @@ export default function JobsPage() {
                                 ))}
                               </div>
                             </div>
-                          ) : (
-                            <p className="text-slate-500 text-xs text-right">Created by: {job.profiles?.full_name || 'Unknown'}</p>
                           )}
                         </div>
+                        {job.sale_date && (
+                          <div className="text-right mt-1">
+                            <p className="text-emerald-600 text-[10px] sm:text-xs font-medium">Sale Date: {new Date(job.sale_date).toLocaleDateString()}</p>
+                          </div>
+                        )}
                         {job.address && (
                           <a
                             href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(job.address)}`}

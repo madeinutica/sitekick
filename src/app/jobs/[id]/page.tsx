@@ -42,15 +42,13 @@ type Profile = {
   is_super_user?: boolean
 }
 
-function JobNotesSection({ jobId, user, jobOwnerId }: { jobId: string, user: User | null, jobOwnerId?: string }) {
+function JobNotesSection({ jobId, user, jobOwnerId, userRoles }: { jobId: string, user: User | null, jobOwnerId?: string, userRoles: { name: string }[] }) {
   const supabase = createClient()
   const [notes, setNotes] = useState<Note[]>([])
   const [noteContent, setNoteContent] = useState('')
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editingContent, setEditingContent] = useState('')
   const [loading, setLoading] = useState(false)
-  const [isSuperUser, setIsSuperUser] = useState(false)
-  const [userRoles, setUserRoles] = useState<string[]>([])
   const [profile, setProfile] = useState<{ full_name: string | null; avatar_url: string | null } | null>(null)
 
   // Fetch notes for this job
@@ -73,35 +71,19 @@ function JobNotesSection({ jobId, user, jobOwnerId }: { jobId: string, user: Use
     fetchNotes()
   }, [fetchNotes])
 
-  // Fetch user profile and roles
+  // Fetch user profile
   useEffect(() => {
     if (!user) return
-    const fetchProfileAndRoles = async () => {
-      // Get profile
+    const fetchProfile = async () => {
       const { data: profileData } = await supabase
         .from('profiles')
         .select('full_name, avatar_url')
         .eq('id', user.id)
         .maybeSingle()
       setProfile(profileData)
-
-      // Get user roles
-      const { data: userRolesData } = await supabase
-        .from('user_roles')
-        .select('roles(name)')
-        .eq('user_id', user.id)
-
-      const roles = (userRolesData as unknown as { roles: { name: string } }[])?.map(ur => ur.roles?.name).filter(Boolean) || []
-      setUserRoles(roles)
-
-      const hasAdminRole = roles.includes('super_admin') || roles.includes('company_admin') || roles.includes('brand_ambassador')
-      setIsSuperUser(hasAdminRole)
-
-      // Get project-specific roles for this job
-      // Note: Project-specific roles have been simplified to use only global roles
     }
-    fetchProfileAndRoles()
-  }, [user, supabase, jobId])
+    fetchProfile()
+  }, [user, supabase])
 
   // Add note
   const handleAddNote = async () => {
@@ -167,10 +149,9 @@ function JobNotesSection({ jobId, user, jobOwnerId }: { jobId: string, user: Use
     return `${diffDays} day${diffDays === 1 ? '' : 's'} ago`
   }
 
-  // Check if user can comment (job owner, super admin, company admin, brand ambassador, or assigned users)
-  const canComment = isSuperUser ||
-    (user && jobOwnerId && user.id === jobOwnerId) ||
-    userRoles.some(role => ['rep', 'measure_tech', 'installer'].includes(role))
+  // Check if user can comment (job owner, admin, or assigned users)
+  const canComment = userRoles.some(role => ['super_admin', 'company_admin', 'brand_ambassador', 'rep', 'measure_tech', 'installer'].includes(role.name)) ||
+    (user && jobOwnerId && user.id === jobOwnerId)
 
   return (
     <div>
@@ -212,7 +193,7 @@ function JobNotesSection({ jobId, user, jobOwnerId }: { jobId: string, user: Use
                 )}
                 <div className="text-xs text-slate-500">{formatTimeAgo(note.created_at)}</div>
               </div>
-              {(isSuperUser || note.user_id === user?.id) && editingId !== note.id && (
+              {(userRoles.some(role => role.name === 'super_admin') || note.user_id === user?.id) && editingId !== note.id && (
                 <button
                   className="ml-2 text-slate-400 hover:text-primary-red"
                   title="Edit note"
@@ -328,7 +309,11 @@ export default function JobDetailPage() {
   const [caption, setCaption] = useState('')
   const [showCaptionForm, setShowCaptionForm] = useState(false)
   const [filterType, setFilterType] = useState<string>('all')
-  const [profile, setProfile] = useState<{ full_name: string | null; avatar_url: string | null } | null>(null)
+  const [profile, setProfile] = useState<{ full_name: string | null; avatar_url: string | null; company_id: string | null } | null>(null)
+  const [isCompAdmin, setIsCompAdmin] = useState(false)
+  const [isGlobalAdmin, setIsGlobalAdmin] = useState(false)
+  const [pendingRequestsCount, setPendingRequestsCount] = useState(0)
+  const [userRoles, setUserRoles] = useState<{ name: string }[]>([])
 
   // Edit mode states
   const [editingJobName, setEditingJobName] = useState(false)
@@ -345,8 +330,6 @@ export default function JobDetailPage() {
   const [users, setUsers] = useState<{ id: string; full_name: string | null; email: string }[]>([])
   const [assignedUsers, setAssignedUsers] = useState<{ id: string; full_name: string | null; avatar_url: string | null; role: string }[]>([])
   const [showAccountDropdown, setShowAccountDropdown] = useState(false)
-  const [userRoles, setUserRoles] = useState<{ name: string }[]>([])
-  const [isGlobalAdmin, setIsGlobalAdmin] = useState(false)
   const [coordinates, setCoordinates] = useState<{ latitude: number; longitude: number } | null>(null)
   const [geocodingLoading, setGeocodingLoading] = useState(false)
   const [documents, setDocuments] = useState<JobDocument[]>([])
@@ -513,6 +496,21 @@ export default function JobDetailPage() {
         })
 
         setIsGlobalAdmin(roles.some(r => ['super_admin', 'brand_ambassador'].includes(r.name)))
+        const companyAdmin = roles.some(r => r.name === 'company_admin')
+        setIsCompAdmin(companyAdmin)
+
+        const globalAdmin = roles.some(r => ['super_admin', 'brand_ambassador'].includes(r.name))
+        const hasAdminRole = globalAdmin || companyAdmin
+
+        // If company admin, check for pending join requests
+        if (hasAdminRole && profileData?.company_id) {
+          const { count } = await supabase
+            .from('company_join_requests')
+            .select('*', { count: 'exact', head: true })
+            .eq('company_id', profileData.company_id)
+            .eq('status', 'pending')
+          setPendingRequestsCount(count || 0)
+        }
 
         // If super user or has appropriate roles, fetch all users for assignment
         const canAssign = profileData.is_super_user || roles.some(role => ['super_admin', 'company_admin', 'brand_ambassador'].includes(role.name))
@@ -1922,15 +1920,51 @@ export default function JobDetailPage() {
                 </button>
                 {showAccountDropdown && (
                   <div className="absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg border border-slate-200 py-1 z-50">
+                    {isGlobalAdmin ? (
+                      <Link href="/admin" onClick={() => setShowAccountDropdown(false)}>
+                        <div className="px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 cursor-pointer flex items-center gap-2">
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                          </svg>
+                          Admin Dashboard
+                        </div>
+                      </Link>
+                    ) : isCompAdmin ? (
+                      <Link href="/dashboard/user-management" onClick={() => setShowAccountDropdown(false)}>
+                        <div className="px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 cursor-pointer flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-2">
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
+                            </svg>
+                            User Management
+                          </div>
+                          {pendingRequestsCount > 0 && (
+                            <span className="bg-primary-red text-white text-[10px] px-1.5 py-0.5 rounded-full font-bold">
+                              {pendingRequestsCount}
+                            </span>
+                          )}
+                        </div>
+                      </Link>
+                    ) : null}
                     <Link href="/profile" onClick={() => setShowAccountDropdown(false)}>
                       <div className="px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 cursor-pointer flex items-center gap-2">
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
                         </svg>
                         Profile Settings
                       </div>
                     </Link>
+                    {!isGlobalAdmin && (
+                      <Link href="/settings" onClick={() => setShowAccountDropdown(false)}>
+                        <div className="px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 cursor-pointer flex items-center gap-2">
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                          </svg>
+                          Settings
+                        </div>
+                      </Link>
+                    )}
                     <button
                       onClick={() => {
                         setShowAccountDropdown(false)
@@ -1974,7 +2008,8 @@ export default function JobDetailPage() {
           capture="environment"
           onChange={handlePhotoUpload}
           ref={fileInputRef}
-          style={{ display: 'none' }}
+          style={{ display: 'none' }
+          }
         />
 
         {/* Assigned Users Section */}
@@ -2019,311 +2054,315 @@ export default function JobDetailPage() {
         </div>
 
         {/* Job Details & Customer Info Grid */}
-        {job.marketsharp_job_id && (
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
-            {/* Customer Information */}
-            {(job.customer_name || job.customer_email || job.customer_phone) && (
-              <div className="bg-white rounded-xl p-6 shadow-md hover:shadow-xl transition-all duration-300 border-t-4 border-blue-500 hover:scale-[1.01]">
+        {
+          job.marketsharp_job_id && (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+              {/* Customer Information */}
+              {(job.customer_name || job.customer_email || job.customer_phone) && (
+                <div className="bg-white rounded-xl p-6 shadow-md hover:shadow-xl transition-all duration-300 border-t-4 border-blue-500 hover:scale-[1.01]">
+                  <h3 className="text-lg font-semibold text-slate-900 mb-4 flex items-center gap-2">
+                    <svg className="w-5 h-5 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                    </svg>
+                    Customer
+                  </h3>
+                  <div className="space-y-3">
+                    {job.customer_name && (
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 bg-blue-50 rounded-lg flex items-center justify-center flex-shrink-0">
+                          <svg className="w-4 h-4 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                          </svg>
+                        </div>
+                        <div>
+                          <div className="text-xs text-slate-500 uppercase tracking-wider">Name</div>
+                          <div className="text-sm font-medium text-slate-900">{job.customer_name}</div>
+                        </div>
+                      </div>
+                    )}
+                    {job.customer_email && (
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 bg-green-50 rounded-lg flex items-center justify-center flex-shrink-0">
+                          <svg className="w-4 h-4 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                          </svg>
+                        </div>
+                        <div>
+                          <div className="text-xs text-slate-500 uppercase tracking-wider">Email</div>
+                          <a href={`mailto:${job.customer_email}`} className="text-sm font-medium text-blue-600 hover:text-blue-800">
+                            {job.customer_email}
+                          </a>
+                        </div>
+                      </div>
+                    )}
+                    {job.customer_phone && (
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 bg-purple-50 rounded-lg flex items-center justify-center flex-shrink-0">
+                          <svg className="w-4 h-4 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
+                          </svg>
+                        </div>
+                        <div>
+                          <div className="text-xs text-slate-500 uppercase tracking-wider">Phone</div>
+                          <a href={`tel:${job.customer_phone}`} className="text-sm font-medium text-blue-600 hover:text-blue-800">
+                            {job.customer_phone}
+                          </a>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Job Status & Timeline */}
+              <div className="bg-white rounded-xl p-6 shadow-md hover:shadow-xl transition-all duration-300 border-t-4 border-amber-500 hover:scale-[1.01]">
                 <h3 className="text-lg font-semibold text-slate-900 mb-4 flex items-center gap-2">
                   <svg className="w-5 h-5 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
                   </svg>
-                  Customer
+                  Job Status
                 </h3>
                 <div className="space-y-3">
-                  {job.customer_name && (
+                  {job.status && (
+                    <div className="flex items-center gap-3">
+                      <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${['installed', 'completed', 'closed'].includes(job.status.toLowerCase())
+                        ? 'bg-green-50'
+                        : 'bg-amber-50'
+                        }`}>
+                        <div className={`w-3 h-3 rounded-full ${['installed', 'completed', 'closed'].includes(job.status.toLowerCase())
+                          ? 'bg-green-500'
+                          : 'bg-amber-500'
+                          }`} />
+                      </div>
+                      <div>
+                        <div className="text-xs text-slate-500 uppercase tracking-wider">Status</div>
+                        <div className="text-sm font-medium text-slate-900">{job.status}</div>
+                      </div>
+                    </div>
+                  )}
+                  {job.sale_date && (
                     <div className="flex items-center gap-3">
                       <div className="w-8 h-8 bg-blue-50 rounded-lg flex items-center justify-center flex-shrink-0">
                         <svg className="w-4 h-4 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-                        </svg>
-                      </div>
-                      <div>
-                        <div className="text-xs text-slate-500 uppercase tracking-wider">Name</div>
-                        <div className="text-sm font-medium text-slate-900">{job.customer_name}</div>
-                      </div>
-                    </div>
-                  )}
-                  {job.customer_email && (
-                    <div className="flex items-center gap-3">
-                      <div className="w-8 h-8 bg-green-50 rounded-lg flex items-center justify-center flex-shrink-0">
-                        <svg className="w-4 h-4 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-                        </svg>
-                      </div>
-                      <div>
-                        <div className="text-xs text-slate-500 uppercase tracking-wider">Email</div>
-                        <a href={`mailto:${job.customer_email}`} className="text-sm font-medium text-blue-600 hover:text-blue-800">
-                          {job.customer_email}
-                        </a>
-                      </div>
-                    </div>
-                  )}
-                  {job.customer_phone && (
-                    <div className="flex items-center gap-3">
-                      <div className="w-8 h-8 bg-purple-50 rounded-lg flex items-center justify-center flex-shrink-0">
-                        <svg className="w-4 h-4 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
-                        </svg>
-                      </div>
-                      <div>
-                        <div className="text-xs text-slate-500 uppercase tracking-wider">Phone</div>
-                        <a href={`tel:${job.customer_phone}`} className="text-sm font-medium text-blue-600 hover:text-blue-800">
-                          {job.customer_phone}
-                        </a>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {/* Job Status & Timeline */}
-            <div className="bg-white rounded-xl p-6 shadow-md hover:shadow-xl transition-all duration-300 border-t-4 border-amber-500 hover:scale-[1.01]">
-              <h3 className="text-lg font-semibold text-slate-900 mb-4 flex items-center gap-2">
-                <svg className="w-5 h-5 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
-                </svg>
-                Job Status
-              </h3>
-              <div className="space-y-3">
-                {job.status && (
-                  <div className="flex items-center gap-3">
-                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${['installed', 'completed', 'closed'].includes(job.status.toLowerCase())
-                      ? 'bg-green-50'
-                      : 'bg-amber-50'
-                      }`}>
-                      <div className={`w-3 h-3 rounded-full ${['installed', 'completed', 'closed'].includes(job.status.toLowerCase())
-                        ? 'bg-green-500'
-                        : 'bg-amber-500'
-                        }`} />
-                    </div>
-                    <div>
-                      <div className="text-xs text-slate-500 uppercase tracking-wider">Status</div>
-                      <div className="text-sm font-medium text-slate-900">{job.status}</div>
-                    </div>
-                  </div>
-                )}
-                {job.sale_date && (
-                  <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 bg-blue-50 rounded-lg flex items-center justify-center flex-shrink-0">
-                      <svg className="w-4 h-4 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                      </svg>
-                    </div>
-                    <div>
-                      <div className="text-xs text-slate-500 uppercase tracking-wider">Sale Date</div>
-                      <div className="text-sm font-medium text-slate-900">{new Date(job.sale_date).toLocaleDateString()}</div>
-                    </div>
-                  </div>
-                )}
-                {job.start_date && (
-                  <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 bg-indigo-50 rounded-lg flex items-center justify-center flex-shrink-0">
-                      <svg className="w-4 h-4 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                      </svg>
-                    </div>
-                    <div>
-                      <div className="text-xs text-slate-500 uppercase tracking-wider">Start Date</div>
-                      <div className="text-sm font-medium text-slate-900">{new Date(job.start_date).toLocaleDateString()}</div>
-                    </div>
-                  </div>
-                )}
-                {job.completed_date && (
-                  <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 bg-green-50 rounded-lg flex items-center justify-center flex-shrink-0">
-                      <svg className="w-4 h-4 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                      </svg>
-                    </div>
-                    <div>
-                      <div className="text-xs text-slate-500 uppercase tracking-wider">Completed</div>
-                      <div className="text-sm font-medium text-slate-900">{new Date(job.completed_date).toLocaleDateString()}</div>
-                    </div>
-                  </div>
-                )}
-                {!job.status && !job.sale_date && !job.start_date && !job.completed_date && (
-                  <p className="text-sm text-slate-500">No status information available</p>
-                )}
-              </div>
-            </div>
-
-            {/* Contract / Financial Info */}
-            {(job.contract_total || job.contract_balance_due || job.contract_status) && (
-              <div className="bg-white rounded-xl p-6 shadow-md hover:shadow-xl transition-all duration-300 border-t-4 border-emerald-500 hover:scale-[1.01]">
-                <h3 className="text-lg font-semibold text-slate-900 mb-4 flex items-center gap-2">
-                  <svg className="w-5 h-5 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                  Contract
-                </h3>
-                <div className="space-y-3">
-                  {job.contract_status && (
-                    <div className="flex items-center gap-3">
-                      <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${job.contract_status.toLowerCase() === 'approved' ? 'bg-green-50' : 'bg-slate-50'
-                        }`}>
-                        <svg className={`w-4 h-4 ${job.contract_status.toLowerCase() === 'approved' ? 'text-green-600' : 'text-slate-500'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                        </svg>
-                      </div>
-                      <div>
-                        <div className="text-xs text-slate-500 uppercase tracking-wider">Contract Status</div>
-                        <div className="text-sm font-medium text-slate-900">{job.contract_status}</div>
-                      </div>
-                    </div>
-                  )}
-                  {job.contract_total != null && job.contract_total > 0 && (
-                    <div className="flex items-center gap-3">
-                      <div className="w-8 h-8 bg-emerald-50 rounded-lg flex items-center justify-center flex-shrink-0">
-                        <span className="text-emerald-600 text-sm font-bold">$</span>
-                      </div>
-                      <div>
-                        <div className="text-xs text-slate-500 uppercase tracking-wider">Total Contract</div>
-                        <div className="text-sm font-bold text-slate-900">${Number(job.contract_total).toLocaleString('en-US', { minimumFractionDigits: 2 })}</div>
-                      </div>
-                    </div>
-                  )}
-                  {job.contract_balance_due != null && (
-                    <div className="flex items-center gap-3">
-                      <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${Number(job.contract_balance_due) > 0 ? 'bg-red-50' : 'bg-green-50'
-                        }`}>
-                        <span className={`text-sm font-bold ${Number(job.contract_balance_due) > 0 ? 'text-red-600' : 'text-green-600'}`}>$</span>
-                      </div>
-                      <div>
-                        <div className="text-xs text-slate-500 uppercase tracking-wider">Balance Due</div>
-                        <div className={`text-sm font-bold ${Number(job.contract_balance_due) > 0 ? 'text-red-600' : 'text-green-600'}`}>
-                          ${Number(job.contract_balance_due).toLocaleString('en-US', { minimumFractionDigits: 2 })}
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                  {(job.contract_cash_total != null && Number(job.contract_cash_total) > 0) && (
-                    <div className="flex items-center gap-3">
-                      <div className="w-8 h-8 bg-slate-50 rounded-lg flex items-center justify-center flex-shrink-0">
-                        <svg className="w-4 h-4 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z" />
-                        </svg>
-                      </div>
-                      <div>
-                        <div className="text-xs text-slate-500 uppercase tracking-wider">Cash</div>
-                        <div className="text-sm font-medium text-slate-900">${Number(job.contract_cash_total).toLocaleString('en-US', { minimumFractionDigits: 2 })}</div>
-                      </div>
-                    </div>
-                  )}
-                  {(job.contract_finance_total != null && Number(job.contract_finance_total) > 0) && (
-                    <div className="flex items-center gap-3">
-                      <div className="w-8 h-8 bg-slate-50 rounded-lg flex items-center justify-center flex-shrink-0">
-                        <svg className="w-4 h-4 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
-                        </svg>
-                      </div>
-                      <div>
-                        <div className="text-xs text-slate-500 uppercase tracking-wider">Financed</div>
-                        <div className="text-sm font-medium text-slate-900">${Number(job.contract_finance_total).toLocaleString('en-US', { minimumFractionDigits: 2 })}</div>
-                      </div>
-                    </div>
-                  )}
-                  {job.contract_date && (
-                    <div className="flex items-center gap-3">
-                      <div className="w-8 h-8 bg-slate-50 rounded-lg flex items-center justify-center flex-shrink-0">
-                        <svg className="w-4 h-4 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
                         </svg>
                       </div>
                       <div>
-                        <div className="text-xs text-slate-500 uppercase tracking-wider">Contract Date</div>
-                        <div className="text-sm font-medium text-slate-900">{new Date(job.contract_date).toLocaleDateString()}</div>
+                        <div className="text-xs text-slate-500 uppercase tracking-wider">Sale Date</div>
+                        <div className="text-sm font-medium text-slate-900">{new Date(job.sale_date).toLocaleDateString()}</div>
                       </div>
                     </div>
                   )}
+                  {job.start_date && (
+                    <div className="flex items-center gap-3">
+                      <div className="w-8 h-8 bg-indigo-50 rounded-lg flex items-center justify-center flex-shrink-0">
+                        <svg className="w-4 h-4 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                      </div>
+                      <div>
+                        <div className="text-xs text-slate-500 uppercase tracking-wider">Start Date</div>
+                        <div className="text-sm font-medium text-slate-900">{new Date(job.start_date).toLocaleDateString()}</div>
+                      </div>
+                    </div>
+                  )}
+                  {job.completed_date && (
+                    <div className="flex items-center gap-3">
+                      <div className="w-8 h-8 bg-green-50 rounded-lg flex items-center justify-center flex-shrink-0">
+                        <svg className="w-4 h-4 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                      </div>
+                      <div>
+                        <div className="text-xs text-slate-500 uppercase tracking-wider">Completed</div>
+                        <div className="text-sm font-medium text-slate-900">{new Date(job.completed_date).toLocaleDateString()}</div>
+                      </div>
+                    </div>
+                  )}
+                  {!job.status && !job.sale_date && !job.start_date && !job.completed_date && (
+                    <p className="text-sm text-slate-500">No status information available</p>
+                  )}
                 </div>
               </div>
-            )}
 
-            {/* MarketSharp Notes */}
-            {job.ms_notes && (
-              <div className="bg-white rounded-xl p-6 shadow-md hover:shadow-xl transition-all duration-300 border-l-4 border-amber-400">
-                <h3 className="text-lg font-semibold text-slate-900 mb-4 flex items-center gap-2">
-                  <svg className="w-5 h-5 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                  </svg>
-                  Job Notes
-                </h3>
-                <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
-                  <p className="text-sm text-slate-800 whitespace-pre-line">{job.ms_notes}</p>
-                </div>
-                <p className="text-xs text-slate-400 mt-2">Synced from MarketSharp</p>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Location Section */}
-        {job?.address && (
-          <div className="bg-white rounded-xl p-6 mb-6 shadow-md hover:shadow-xl transition-shadow duration-300 border border-slate-100">
-            <h3 className="text-lg font-semibold text-slate-900 mb-4">Location</h3>
-            <div className="space-y-4">
-              <a
-                href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(job.address)}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-slate-700 hover:text-primary-red transition flex items-center gap-1"
-              >
-                <svg className="w-4 h-4 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                  <path fillRule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clipRule="evenodd" />
-                </svg>
-                {job.address}
-              </a>
-              {coordinates ? (
-                <div className="h-64 rounded-lg overflow-hidden border border-slate-200">
-                  <Map
-                    initialViewState={{
-                      latitude: coordinates.latitude,
-                      longitude: coordinates.longitude,
-                      zoom: 15
-                    }}
-                    style={{ width: '100%', height: '100%' }}
-                    mapStyle="mapbox://styles/mapbox/streets-v11"
-                    mapboxAccessToken={process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN}
-                  >
-                    <Marker
-                      latitude={coordinates.latitude}
-                      longitude={coordinates.longitude}
-                      anchor="bottom"
-                    >
-                      <a
-                        href={`https://www.google.com/maps/search/?api=1&query=${coordinates.latitude},${coordinates.longitude}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="cursor-pointer hover:scale-110 transition-transform flex flex-col items-center group relative"
-                        title="Navigate to Job"
-                      >
-                        <div className="w-6 h-6 bg-primary-red rounded-full border-2 border-white shadow-lg flex items-center justify-center">
-                          <svg className="w-4 h-4 text-white" fill="currentColor" viewBox="0 0 20 20">
-                            <path fillRule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clipRule="evenodd" />
+              {/* Contract / Financial Info */}
+              {(job.contract_total || job.contract_balance_due || job.contract_status) && (
+                <div className="bg-white rounded-xl p-6 shadow-md hover:shadow-xl transition-all duration-300 border-t-4 border-emerald-500 hover:scale-[1.01]">
+                  <h3 className="text-lg font-semibold text-slate-900 mb-4 flex items-center gap-2">
+                    <svg className="w-5 h-5 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    Contract
+                  </h3>
+                  <div className="space-y-3">
+                    {job.contract_status && (
+                      <div className="flex items-center gap-3">
+                        <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${job.contract_status.toLowerCase() === 'approved' ? 'bg-green-50' : 'bg-slate-50'
+                          }`}>
+                          <svg className={`w-4 h-4 ${job.contract_status.toLowerCase() === 'approved' ? 'text-green-600' : 'text-slate-500'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
                           </svg>
                         </div>
-                        <div className="absolute bottom-full mb-2 bg-slate-900 text-white text-[10px] px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none">
-                          Navigate to Job
-                          <div className="absolute top-full left-1/2 -translate-x-1/2 w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent border-t-slate-900"></div>
+                        <div>
+                          <div className="text-xs text-slate-500 uppercase tracking-wider">Contract Status</div>
+                          <div className="text-sm font-medium text-slate-900">{job.contract_status}</div>
                         </div>
-                      </a>
-                    </Marker>
-                  </Map>
+                      </div>
+                    )}
+                    {job.contract_total != null && job.contract_total > 0 && (
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 bg-emerald-50 rounded-lg flex items-center justify-center flex-shrink-0">
+                          <span className="text-emerald-600 text-sm font-bold">$</span>
+                        </div>
+                        <div>
+                          <div className="text-xs text-slate-500 uppercase tracking-wider">Total Contract</div>
+                          <div className="text-sm font-bold text-slate-900">${Number(job.contract_total).toLocaleString('en-US', { minimumFractionDigits: 2 })}</div>
+                        </div>
+                      </div>
+                    )}
+                    {job.contract_balance_due != null && (
+                      <div className="flex items-center gap-3">
+                        <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${Number(job.contract_balance_due) > 0 ? 'bg-red-50' : 'bg-green-50'
+                          }`}>
+                          <span className={`text-sm font-bold ${Number(job.contract_balance_due) > 0 ? 'text-red-600' : 'text-green-600'}`}>$</span>
+                        </div>
+                        <div>
+                          <div className="text-xs text-slate-500 uppercase tracking-wider">Balance Due</div>
+                          <div className={`text-sm font-bold ${Number(job.contract_balance_due) > 0 ? 'text-red-600' : 'text-green-600'}`}>
+                            ${Number(job.contract_balance_due).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                    {(job.contract_cash_total != null && Number(job.contract_cash_total) > 0) && (
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 bg-slate-50 rounded-lg flex items-center justify-center flex-shrink-0">
+                          <svg className="w-4 h-4 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z" />
+                          </svg>
+                        </div>
+                        <div>
+                          <div className="text-xs text-slate-500 uppercase tracking-wider">Cash</div>
+                          <div className="text-sm font-medium text-slate-900">${Number(job.contract_cash_total).toLocaleString('en-US', { minimumFractionDigits: 2 })}</div>
+                        </div>
+                      </div>
+                    )}
+                    {(job.contract_finance_total != null && Number(job.contract_finance_total) > 0) && (
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 bg-slate-50 rounded-lg flex items-center justify-center flex-shrink-0">
+                          <svg className="w-4 h-4 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
+                          </svg>
+                        </div>
+                        <div>
+                          <div className="text-xs text-slate-500 uppercase tracking-wider">Financed</div>
+                          <div className="text-sm font-medium text-slate-900">${Number(job.contract_finance_total).toLocaleString('en-US', { minimumFractionDigits: 2 })}</div>
+                        </div>
+                      </div>
+                    )}
+                    {job.contract_date && (
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 bg-slate-50 rounded-lg flex items-center justify-center flex-shrink-0">
+                          <svg className="w-4 h-4 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                          </svg>
+                        </div>
+                        <div>
+                          <div className="text-xs text-slate-500 uppercase tracking-wider">Contract Date</div>
+                          <div className="text-sm font-medium text-slate-900">{new Date(job.contract_date).toLocaleDateString()}</div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </div>
-              ) : geocodingLoading ? (
-                <div className="h-64 bg-slate-100 rounded-lg flex items-center justify-center">
-                  <div className="text-slate-500">Loading map...</div>
-                </div>
-              ) : (
-                <div className="h-64 bg-slate-100 rounded-lg flex items-center justify-center">
-                  <div className="text-slate-500">Unable to load map</div>
+              )}
+
+              {/* MarketSharp Notes */}
+              {job.ms_notes && (
+                <div className="bg-white rounded-xl p-6 shadow-md hover:shadow-xl transition-all duration-300 border-l-4 border-amber-400">
+                  <h3 className="text-lg font-semibold text-slate-900 mb-4 flex items-center gap-2">
+                    <svg className="w-5 h-5 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                    </svg>
+                    Job Notes
+                  </h3>
+                  <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
+                    <p className="text-sm text-slate-800 whitespace-pre-line">{job.ms_notes}</p>
+                  </div>
+                  <p className="text-xs text-slate-400 mt-2">Synced from MarketSharp</p>
                 </div>
               )}
             </div>
-          </div>
-        )}
+          )
+        }
+
+        {/* Location Section */}
+        {
+          job?.address && (
+            <div className="bg-white rounded-xl p-6 mb-6 shadow-md hover:shadow-xl transition-shadow duration-300 border border-slate-100">
+              <h3 className="text-lg font-semibold text-slate-900 mb-4">Location</h3>
+              <div className="space-y-4">
+                <a
+                  href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(job.address)}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-slate-700 hover:text-primary-red transition flex items-center gap-1"
+                >
+                  <svg className="w-4 h-4 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clipRule="evenodd" />
+                  </svg>
+                  {job.address}
+                </a>
+                {coordinates ? (
+                  <div className="h-64 rounded-lg overflow-hidden border border-slate-200">
+                    <Map
+                      initialViewState={{
+                        latitude: coordinates.latitude,
+                        longitude: coordinates.longitude,
+                        zoom: 15
+                      }}
+                      style={{ width: '100%', height: '100%' }}
+                      mapStyle="mapbox://styles/mapbox/streets-v11"
+                      mapboxAccessToken={process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN}
+                    >
+                      <Marker
+                        latitude={coordinates.latitude}
+                        longitude={coordinates.longitude}
+                        anchor="bottom"
+                      >
+                        <a
+                          href={`https://www.google.com/maps/search/?api=1&query=${coordinates.latitude},${coordinates.longitude}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="cursor-pointer hover:scale-110 transition-transform flex flex-col items-center group relative"
+                          title="Navigate to Job"
+                        >
+                          <div className="w-6 h-6 bg-primary-red rounded-full border-2 border-white shadow-lg flex items-center justify-center">
+                            <svg className="w-4 h-4 text-white" fill="currentColor" viewBox="0 0 20 20">
+                              <path fillRule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clipRule="evenodd" />
+                            </svg>
+                          </div>
+                          <div className="absolute bottom-full mb-2 bg-slate-900 text-white text-[10px] px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none">
+                            Navigate to Job
+                            <div className="absolute top-full left-1/2 -translate-x-1/2 w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent border-t-slate-900"></div>
+                          </div>
+                        </a>
+                      </Marker>
+                    </Map>
+                  </div>
+                ) : geocodingLoading ? (
+                  <div className="h-64 bg-slate-100 rounded-lg flex items-center justify-center">
+                    <div className="text-slate-500">Loading map...</div>
+                  </div>
+                ) : (
+                  <div className="h-64 bg-slate-100 rounded-lg flex items-center justify-center">
+                    <div className="text-slate-500">Unable to load map</div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )
+        }
 
         {/* Photos and Documents Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -2693,201 +2732,169 @@ export default function JobDetailPage() {
         {/* Comments Section */}
         <div className="bg-white rounded-xl border border-slate-200 p-6 mt-6 shadow-md hover:shadow-xl transition-shadow duration-300">
           <h2 className="text-lg font-semibold text-slate-900 mb-4">Comments</h2>
-          <JobNotesSection jobId={String(jobId)} user={user} jobOwnerId={job?.user_id} />
+          <JobNotesSection jobId={String(jobId)} user={user} jobOwnerId={job?.user_id} userRoles={userRoles} />
         </div>
-      </main>
+      </main >
 
       {/* Photo Modal */}
-      {showPhotoModal && selectedPhoto ? (
-        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4" onClick={() => {
-          console.log('Modal background clicked')
-          setShowPhotoModal(false)
-        }}>
-          <div className="relative max-w-4xl max-h-full bg-white rounded-lg overflow-hidden" onClick={(e) => {
-            console.log('Modal content clicked')
-            e.stopPropagation()
+      {
+        showPhotoModal && selectedPhoto ? (
+          <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4" onClick={() => {
+            console.log('Modal background clicked')
+            setShowPhotoModal(false)
           }}>
-            {/* Debug info */}
-            <div className="absolute top-0 left-0 bg-primary-red text-white p-2 text-xs z-20">
-              Modal Open - Photo ID: {selectedPhoto.id}
-            </div>
-            <button
-              onClick={() => {
-                console.log('Close button clicked')
-                setShowPhotoModal(false)
-              }}
-              className="absolute top-4 right-4 z-10 w-10 h-10 bg-black bg-opacity-50 text-white rounded-full flex items-center justify-center hover:bg-opacity-70 transition"
-            >
-              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
-
-            {/* Navigation buttons */}
-            {(() => {
-              const currentIndex = filteredPhotos.findIndex(p => p.id === selectedPhoto.id)
-              const hasPrev = currentIndex > 0
-              const hasNext = currentIndex < filteredPhotos.length - 1
-
-              return (
-                <>
-                  {hasPrev && (
-                    <button
-                      onClick={() => setSelectedPhoto(filteredPhotos[currentIndex - 1])}
-                      className="absolute left-4 top-1/2 -translate-y-1/2 w-12 h-12 bg-black bg-opacity-50 text-white rounded-full flex items-center justify-center hover:bg-opacity-70 transition"
-                    >
-                      <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-                      </svg>
-                    </button>
-                  )}
-                  {hasNext && (
-                    <button
-                      onClick={() => setSelectedPhoto(filteredPhotos[currentIndex + 1])}
-                      className="absolute right-4 top-1/2 -translate-y-1/2 w-12 h-12 bg-black bg-opacity-50 text-white rounded-full flex items-center justify-center hover:bg-opacity-70 transition"
-                    >
-                      <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                      </svg>
-                    </button>
-                  )}
-                </>
-              )
-            })()}
-
-            {/* Image */}
-            <div className="relative w-full h-auto max-h-[80vh]">
-              <Image
-                src={selectedPhoto.image_url}
-                alt={selectedPhoto.caption || "Job site"}
-                width={1200}
-                height={1200}
-                className="w-full h-auto object-contain"
-                unoptimized
-                onError={(e) => {
-                  console.error('Image failed to load:', selectedPhoto.image_url)
-                  e.currentTarget.src = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="400" height="400"%3E%3Crect fill="%23ddd" width="400" height="400"/%3E%3Ctext x="50%25" y="50%25" text-anchor="middle" dy=".3em" font-size="24"%3EError%3C/text%3E%3C/svg%3E'
+            <div className="relative max-w-4xl max-h-full bg-white rounded-lg overflow-hidden" onClick={(e) => {
+              console.log('Modal content clicked')
+              e.stopPropagation()
+            }}>
+              {/* Debug info */}
+              <div className="absolute top-0 left-0 bg-primary-red text-white p-2 text-xs z-20">
+                Modal Open - Photo ID: {selectedPhoto.id}
+              </div>
+              <button
+                onClick={() => {
+                  console.log('Close button clicked')
+                  setShowPhotoModal(false)
                 }}
-              />
-            </div>
+                className="absolute top-4 right-4 z-10 w-10 h-10 bg-black bg-opacity-50 text-white rounded-full flex items-center justify-center hover:bg-opacity-70 transition"
+              >
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
 
-            {/* Photo info */}
-            <div className="p-6 bg-white">
-              <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center gap-2">
-                  {selectedPhoto.photo_type && (
-                    <span className={`px-3 py-1 text-sm font-semibold rounded-full ${selectedPhoto.photo_type === 'before' ? 'bg-blue-500 text-white' :
-                      selectedPhoto.photo_type === 'after' ? 'bg-green-500 text-white' :
-                        selectedPhoto.photo_type === 'issue' ? 'bg-red-500 text-white' :
-                          selectedPhoto.photo_type === 'completed' ? 'bg-purple-500 text-white' :
-                            'bg-slate-500 text-white'
-                      }`}>
-                      {selectedPhoto.photo_type}
-                    </span>
-                  )}
-                  {selectedPhoto.latitude && selectedPhoto.longitude && (
-                    <span className="px-3 py-1 text-sm font-semibold rounded-full bg-orange-500 text-white flex items-center gap-1">
-                      <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-                        <path fillRule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clipRule="evenodd" />
-                      </svg>
-                      GPS
-                    </span>
-                  )}
-                </div>
-                <div className="text-sm text-slate-500">
-                  {(() => {
-                    const currentIndex = filteredPhotos.findIndex(p => p.id === selectedPhoto.id)
-                    return `${currentIndex + 1} of ${filteredPhotos.length}`
-                  })()}
-                </div>
+              {/* Navigation buttons */}
+              {(() => {
+                const currentIndex = filteredPhotos.findIndex(p => p.id === selectedPhoto.id)
+                const hasPrev = currentIndex > 0
+                const hasNext = currentIndex < filteredPhotos.length - 1
+
+                return (
+                  <>
+                    {hasPrev && (
+                      <button
+                        onClick={() => setSelectedPhoto(filteredPhotos[currentIndex - 1])}
+                        className="absolute left-4 top-1/2 -translate-y-1/2 w-12 h-12 bg-black bg-opacity-50 text-white rounded-full flex items-center justify-center hover:bg-opacity-70 transition"
+                      >
+                        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                        </svg>
+                      </button>
+                    )}
+                    {hasNext && (
+                      <button
+                        onClick={() => setSelectedPhoto(filteredPhotos[currentIndex + 1])}
+                        className="absolute right-4 top-1/2 -translate-y-1/2 w-12 h-12 bg-black bg-opacity-50 text-white rounded-full flex items-center justify-center hover:bg-opacity-70 transition"
+                      >
+                        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                        </svg>
+                      </button>
+                    )}
+                  </>
+                )
+              })()}
+
+              {/* Image */}
+              <div className="relative w-full h-auto max-h-[80vh]">
+                <Image
+                  src={selectedPhoto.image_url}
+                  alt={selectedPhoto.caption || "Job site"}
+                  width={1200}
+                  height={1200}
+                  className="w-full h-auto object-contain"
+                  unoptimized
+                  onError={(e) => {
+                    console.error('Image failed to load:', selectedPhoto.image_url)
+                    e.currentTarget.src = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="400" height="400"%3E%3Crect fill="%23ddd" width="400" height="400"/%3E%3Ctext x="50%25" y="50%25" text-anchor="middle" dy=".3em" font-size="24"%3EError%3C/text%3E%3C/svg%3E'
+                  }}
+                />
               </div>
 
-              {selectedPhoto.caption && (
-                <p className="text-slate-700 mb-4">{selectedPhoto.caption}</p>
-              )}
+              {/* Photo info */}
+              <div className="p-6 bg-white">
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-2">
+                    {selectedPhoto.photo_type && (
+                      <span className={`px-3 py-1 text-sm font-semibold rounded-full ${selectedPhoto.photo_type === 'before' ? 'bg-blue-500 text-white' :
+                        selectedPhoto.photo_type === 'after' ? 'bg-green-500 text-white' :
+                          selectedPhoto.photo_type === 'issue' ? 'bg-red-500 text-white' :
+                            selectedPhoto.photo_type === 'completed' ? 'bg-purple-500 text-white' :
+                              'bg-slate-500 text-white'
+                        }`}>
+                        {selectedPhoto.photo_type}
+                      </span>
+                    )}
+                    {selectedPhoto.latitude && selectedPhoto.longitude && (
+                      <span className="px-3 py-1 text-sm font-semibold rounded-full bg-orange-500 text-white flex items-center gap-1">
+                        <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                          <path fillRule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clipRule="evenodd" />
+                        </svg>
+                        GPS
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-sm text-slate-500">
+                    {(() => {
+                      const currentIndex = filteredPhotos.findIndex(p => p.id === selectedPhoto.id)
+                      return `${currentIndex + 1} of ${filteredPhotos.length}`
+                    })()}
+                  </div>
+                </div>
 
-              {selectedPhoto.latitude && selectedPhoto.longitude && (
-                <a
-                  href={`https://www.google.com/maps?q=${selectedPhoto.latitude},${selectedPhoto.longitude}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition"
-                >
-                  <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-                    <path fillRule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clipRule="evenodd" />
-                  </svg>
-                  View on Map
-                </a>
-              )}
+                {selectedPhoto.caption && (
+                  <p className="text-slate-700 mb-4">{selectedPhoto.caption}</p>
+                )}
+
+                {selectedPhoto.latitude && selectedPhoto.longitude && (
+                  <a
+                    href={`https://www.google.com/maps?q=${selectedPhoto.latitude},${selectedPhoto.longitude}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition"
+                  >
+                    <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clipRule="evenodd" />
+                    </svg>
+                    View on Map
+                  </a>
+                )}
+              </div>
             </div>
           </div>
-        </div>
-      ) : null}
+        ) : null
+      }
 
       {/* Document Modal */}
-      {showDocumentModal && selectedDocument ? (
-        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4" onClick={() => {
-          setShowDocumentModal(false)
-          setDocumentUrl(null)
-        }}>
-          <div className="relative max-w-4xl max-h-full bg-white rounded-lg overflow-hidden" onClick={(e) => e.stopPropagation()}>
-            <button
-              onClick={() => {
-                setShowDocumentModal(false)
-                setDocumentUrl(null)
-              }}
-              className="absolute top-4 right-4 z-10 w-10 h-10 bg-black bg-opacity-50 text-white rounded-full flex items-center justify-center hover:bg-opacity-70 transition"
-            >
-              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
+      {
+        showDocumentModal && selectedDocument ? (
+          <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4" onClick={() => {
+            setShowDocumentModal(false)
+            setDocumentUrl(null)
+          }}>
+            <div className="relative max-w-4xl max-h-full bg-white rounded-lg overflow-hidden" onClick={(e) => e.stopPropagation()}>
+              <button
+                onClick={() => {
+                  setShowDocumentModal(false)
+                  setDocumentUrl(null)
+                }}
+                className="absolute top-4 right-4 z-10 w-10 h-10 bg-black bg-opacity-50 text-white rounded-full flex items-center justify-center hover:bg-opacity-70 transition"
+              >
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
 
-            {/* Document Header */}
-            <div className="p-4 bg-slate-50 border-b border-slate-200">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="font-semibold text-slate-900 truncate">{selectedDocument.file_name}</h3>
-                  <p className="text-sm text-slate-600">
-                    {formatFileSize(selectedDocument.file_size)} • Uploaded by {selectedDocument.uploader_name}
-                  </p>
-                </div>
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => {
-                      if (documentUrl) {
-                        const link = window.document.createElement('a')
-                        link.href = documentUrl
-                        link.download = selectedDocument.file_name
-                        link.click()
-                      }
-                    }}
-                    className="px-3 py-1 text-sm bg-indigo-600 text-white rounded hover:bg-indigo-700 transition"
-                  >
-                    Download
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            {/* Document Viewer */}
-            <div className="relative w-full h-[80vh] bg-slate-100">
-              {selectedDocument.file_type.includes('pdf') ? (
-                <iframe
-                  src={documentUrl || undefined}
-                  className="w-full h-full"
-                  title={selectedDocument.file_name}
-                />
-              ) : (
-                <div className="flex items-center justify-center h-full">
-                  <div className="text-center">
-                    <div className="w-16 h-16 bg-slate-200 rounded-full flex items-center justify-center mx-auto mb-4">
-                      <svg className="w-8 h-8 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                      </svg>
-                    </div>
-                    <h3 className="text-lg font-medium text-slate-900 mb-2">Preview not available</h3>
-                    <p className="text-slate-600 mb-4">This file type cannot be previewed in the browser</p>
+              {/* Document Header */}
+              <div className="p-4 bg-slate-50 border-b border-slate-200">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="font-semibold text-slate-900 truncate">{selectedDocument.file_name}</h3>
+                    <p className="text-sm text-slate-600">
+                      {formatFileSize(selectedDocument.file_size)} • Uploaded by {selectedDocument.uploader_name}
+                    </p>
+                  </div>
+                  <div className="flex gap-2">
                     <button
                       onClick={() => {
                         if (documentUrl) {
@@ -2897,17 +2904,53 @@ export default function JobDetailPage() {
                           link.click()
                         }
                       }}
-                      className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition"
+                      className="px-3 py-1 text-sm bg-indigo-600 text-white rounded hover:bg-indigo-700 transition"
                     >
-                      Download to View
+                      Download
                     </button>
                   </div>
                 </div>
-              )}
+              </div>
+
+              {/* Document Viewer */}
+              <div className="relative w-full h-[80vh] bg-slate-100">
+                {selectedDocument.file_type.includes('pdf') ? (
+                  <iframe
+                    src={documentUrl || undefined}
+                    className="w-full h-full"
+                    title={selectedDocument.file_name}
+                  />
+                ) : (
+                  <div className="flex items-center justify-center h-full">
+                    <div className="text-center">
+                      <div className="w-16 h-16 bg-slate-200 rounded-full flex items-center justify-center mx-auto mb-4">
+                        <svg className="w-8 h-8 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                        </svg>
+                      </div>
+                      <h3 className="text-lg font-medium text-slate-900 mb-2">Preview not available</h3>
+                      <p className="text-slate-600 mb-4">This file type cannot be previewed in the browser</p>
+                      <button
+                        onClick={() => {
+                          if (documentUrl) {
+                            const link = window.document.createElement('a')
+                            link.href = documentUrl
+                            link.download = selectedDocument.file_name
+                            link.click()
+                          }
+                        }}
+                        className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition"
+                      >
+                        Download to View
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
-        </div>
-      ) : null}
+        ) : null
+      }
 
     </div>
   )
