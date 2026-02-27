@@ -193,6 +193,12 @@ export default function UserManagementPage() {
                 setCompanyId(personalCompanyId)
 
                 if (companyAdmin) {
+                    if (!personalCompanyId) {
+                        console.error('Company Admin has no associated company_id')
+                        alert('Warning: Your account is set as a Company Admin but is not associated with any company. Please contact support.')
+                        router.push('/')
+                        return
+                    }
                     fetchUsersAndRoles(globalAdmin, personalCompanyId)
                     fetchPendingRequests(personalCompanyId)
                 } else if (globalAdmin) {
