@@ -2,7 +2,7 @@
 
 import { createClient } from '@/lib/supabase/client'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { useEffect, useState, useCallback, useRef } from 'react'
+import { useEffect, useState, useCallback, useRef, Suspense } from 'react'
 import type { User } from '@supabase/supabase-js'
 import Link from 'next/link'
 import Image from 'next/image'
@@ -22,7 +22,7 @@ type Job = {
 // Force dynamic rendering to avoid static generation issues
 export const dynamic = 'force-dynamic'
 
-export default function DashboardPage() {
+function DashboardPageContent() {
   const [user, setUser] = useState<User | null>(null)
   const [isSuperUser, setIsSuperUser] = useState(false)
   const [isCompAdmin, setIsCompAdmin] = useState(false)
@@ -644,5 +644,17 @@ export default function DashboardPage() {
         </div>
       )}
     </div>
+  )
+}
+
+export default function DashboardPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-red"></div>
+      </div>
+    }>
+      <DashboardPageContent />
+    </Suspense>
   )
 }

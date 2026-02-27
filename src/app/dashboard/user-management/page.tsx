@@ -2,7 +2,7 @@
 
 import { createClient } from '@/lib/supabase/client'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, Suspense } from 'react'
 import type { User } from '@supabase/supabase-js'
 import Link from 'next/link'
 
@@ -33,7 +33,7 @@ type JoinRequest = {
     }
 }
 
-export default function UserManagementPage() {
+function UserManagementPageContent() {
     const [user, setUser] = useState<User | null>(null)
     const [users, setUsers] = useState<UserWithRoles[]>([])
     const [roles, setRoles] = useState<Role[]>([])
@@ -506,5 +506,20 @@ export default function UserManagementPage() {
                 )}
             </main>
         </div>
+    )
+}
+
+export default function UserManagementPage() {
+    return (
+        <Suspense fallback={
+            <div className="min-h-screen bg-linear-to-br from-light-gray via-white to-light-gray flex items-center justify-center">
+                <div className="text-center">
+                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-red mx-auto"></div>
+                    <p className="mt-4 text-gray-600">Loading user management...</p>
+                </div>
+            </div>
+        }>
+            <UserManagementPageContent />
+        </Suspense>
     )
 }
