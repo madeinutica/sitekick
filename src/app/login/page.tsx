@@ -18,18 +18,18 @@ export default function LoginPage() {
     e.preventDefault()
     setLoading(true)
     setError('')
-    
+
     const { error } = await supabase.auth.signInWithPassword({
       email,
       password,
     })
-    
+
     if (error) {
       setError(error.message)
       setLoading(false)
       return
     }
-    
+
     router.push('/')
   }
 
@@ -69,11 +69,16 @@ export default function LoginPage() {
                 required
               />
             </div>
-            
+
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-2" htmlFor="password">
-                Password
-              </label>
+              <div className="flex justify-between items-center mb-2">
+                <label className="block text-sm font-medium text-slate-700" htmlFor="password">
+                  Password
+                </label>
+                <Link href="/forgot-password" className="text-sm text-primary-red hover:text-primary-red-dark">
+                  Forgot password?
+                </Link>
+              </div>
               <input
                 className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-red focus:border-transparent transition"
                 type="password"
@@ -85,8 +90,8 @@ export default function LoginPage() {
               />
             </div>
 
-            <button 
-              className="w-full px-4 py-3 text-white bg-primary-red rounded-lg font-medium hover:bg-primary-red-dark focus:outline-none focus:ring-2 focus:ring-primary-red focus:ring-offset-2 transition disabled:opacity-50 disabled:cursor-not-allowed" 
+            <button
+              className="w-full px-4 py-3 text-white bg-primary-red rounded-lg font-medium hover:bg-primary-red-dark focus:outline-none focus:ring-2 focus:ring-primary-red focus:ring-offset-2 transition disabled:opacity-50 disabled:cursor-not-allowed"
               type="submit"
               disabled={loading}
             >
