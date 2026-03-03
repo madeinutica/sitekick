@@ -19,12 +19,7 @@ export default function ForgotPasswordPage() {
         setLoading(true)
         setError('')
 
-        // In production, you would want to use a dynamic URL based on the environment
-        const redirectUrl = `${window.location.origin}/reset-password`
-
-        const { error } = await supabase.auth.resetPasswordForEmail(email, {
-            redirectTo: redirectUrl,
-        })
+        const { error } = await supabase.auth.resetPasswordForEmail(email)
 
         if (error) {
             setError(error.message)
