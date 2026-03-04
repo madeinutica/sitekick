@@ -8,30 +8,45 @@ function ResetPasswordForm() {
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
   const [loading, setLoading] = useState(false)
+  const [verifying, setVerifying] = useState(false)
+  const [readyToReset, setReadyToReset] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState(false)
   const router = useRouter()
   const searchParams = useSearchParams()
   const supabase = createClient()
 
+  // This effect just checks if we have any auth data in the URL
   useEffect(() => {
-    const handleAuth = async () => {
-      // 1. Check for PKCE 'code' parameter (Next.js 15 SSR apps typically use this)
+    const hasCode = !!searchParams.get('code')
+    const hasAccessToken = !!searchParams.get('access_token')
+    const hasHashToken = typeof window !== 'undefined' && window.location.hash.includes('access_token')
+
+    if (hasCode || hasAccessToken || hasHashToken) {
+      // We have tokens, but we won't consume them yet. 
+      // The user must click the "Verify" button first.
+    }
+  }, [searchParams])
+
+  const handleVerify = async () => {
+    setVerifying(true)
+    setError('')
+
+    try {
+      // 1. Check for PKCE 'code' parameter
       const code = searchParams.get('code')
       if (code) {
         const { error } = await supabase.auth.exchangeCodeForSession(code)
-        if (error) {
-          console.error("PKCE exchange error:", error.message)
-          setError(error.message)
-        }
+        if (error) throw error
+        setReadyToReset(true)
+        setVerifying(false)
         return
       }
 
-      // 2. Check for traditional 'access_token' in query params
+      // 2. Check for traditional tokens
       let accessToken = searchParams.get('access_token')
       let refreshToken = searchParams.get('refresh_token')
 
-      // 3. Fallback to URL hash fragment (Supabase standard for hash-based redirects)
       if (!accessToken && typeof window !== 'undefined' && window.location.hash) {
         const hashParams = new URLSearchParams(window.location.hash.substring(1))
         accessToken = hashParams.get('access_token')
@@ -43,15 +58,24 @@ function ResetPasswordForm() {
           access_token: accessToken,
           refresh_token: refreshToken
         })
-        if (error) {
-          console.error("Session set error:", error.message)
-          setError(error.message)
+        if (error) throw error
+        setReadyToReset(true)
+      } else {
+        // If we reach here, we might already have a session or the link is invalid
+        const { data } = await supabase.auth.getSession()
+        if (data.session) {
+          setReadyToReset(true)
+        } else {
+          setError('No valid reset session found. Your link may have expired.')
         }
       }
+    } catch (err: any) {
+      console.error("Auth verification error:", err.message)
+      setError(err.message || 'Verification failed')
+    } finally {
+      setVerifying(false)
     }
-
-    handleAuth()
-  }, [searchParams, supabase.auth])
+  }
 
   const handleResetPassword = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -98,7 +122,9 @@ function ResetPasswordForm() {
         <div className="bg-white rounded-xl border border-slate-200 p-8 shadow-sm">
           <div className="text-center mb-8">
             <h1 className="text-2xl font-bold text-slate-900">Reset Your Password</h1>
-            <p className="text-slate-600 mt-2">Enter your new password below</p>
+            <p className="text-slate-600 mt-2">
+              {!readyToReset && !success ? 'Please verify your request to continue' : 'Enter your new password below'}
+            </p>
           </div>
 
           {success ? (
@@ -110,6 +136,33 @@ function ResetPasswordForm() {
               </div>
               <h2 className="text-xl font-semibold text-slate-900 mb-2">Password Updated!</h2>
               <p className="text-slate-600">Your password has been successfully reset. You will be redirected to the login page shortly.</p>
+            </div>
+          ) : !readyToReset ? (
+            <div className="space-y-6">
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 text-sm text-blue-700">
+                To protect your account, please click the button below to verify this reset request and choose a new password.
+              </div>
+
+              {error && (
+                <div className="bg-primary-red-light border border-primary-red rounded-lg p-4">
+                  <p className="text-primary-red text-sm">{error}</p>
+                </div>
+              )}
+
+              <button
+                onClick={handleVerify}
+                disabled={verifying}
+                className="w-full px-4 py-3 bg-primary-red text-white rounded-lg font-medium hover:bg-primary-red-dark transition disabled:opacity-50 flex items-center justify-center gap-3"
+              >
+                {verifying ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    Verifying...
+                  </>
+                ) : (
+                  'Verify & Continue'
+                )}
+              </button>
             </div>
           ) : (
             <form onSubmit={handleResetPassword} className="space-y-6">

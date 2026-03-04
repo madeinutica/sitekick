@@ -13,6 +13,15 @@ export default function LandingPage() {
 
   useEffect(() => {
     const checkUser = async () => {
+      // Safety Net: If we land here with a 'code' (from a reset password link where Supabase ignored the redirectTo),
+      // we need to bounce the user to the correct reset page immediately.
+      const url = new URL(window.location.href);
+      const code = url.searchParams.get('code');
+      if (code) {
+        router.push(`/reset-password?code=${code}`);
+        return;
+      }
+
       const { data } = await supabase.auth.getUser()
       if (data.user) {
         router.push('/dashboard')
@@ -62,7 +71,7 @@ export default function LandingPage() {
             <span className="block text-primary-red mt-2">Like Never Before</span>
           </h2>
           <p className="text-xl text-slate-600 mb-8 max-w-3xl mx-auto">
-            Professional photo documentation, job management, and GPS tracking for field technicians. 
+            Professional photo documentation, job management, and GPS tracking for field technicians.
             Streamline your workflow and never lose track of a job site again.
           </p>
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
