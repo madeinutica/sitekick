@@ -6,28 +6,24 @@ import { useState } from 'react'
 import Link from 'next/link'
 import Image from 'next/image'
 
+import { resetPassword } from '@/app/actions/auth'
+
 export default function ForgotPasswordPage() {
     const [email, setEmail] = useState('')
     const [loading, setLoading] = useState(false)
     const [error, setError] = useState('')
     const [success, setSuccess] = useState(false)
     const router = useRouter()
-    const supabase = createClient()
 
     const handleResetPassword = async (e: React.FormEvent<HTMLFormElement>) => {
         e.preventDefault()
         setLoading(true)
         setError('')
 
-        // Point directly to reset-password. This avoids server-side routes that might be pre-clicked by email scanners.
-        const redirectUrl = `${window.location.origin}/reset-password`
+        const result = await resetPassword(email)
 
-        const { error } = await supabase.auth.resetPasswordForEmail(email, {
-            redirectTo: redirectUrl,
-        })
-
-        if (error) {
-            setError(error.message)
+        if (result.error) {
+            setError(result.error)
             setLoading(false)
             return
         }

@@ -13,12 +13,10 @@ export default function LandingPage() {
 
   useEffect(() => {
     const checkUser = async () => {
-      // Safety Net: If we land here with a 'code' (from a reset password link where Supabase ignored the redirectTo),
+      // Safety Net: If we land here with auth data in the URL, 
       // we need to bounce the user to the correct reset page immediately.
-      const url = new URL(window.location.href);
-      const code = url.searchParams.get('code');
-      if (code) {
-        router.push(`/reset-password?code=${code}`);
+      if (window.location.search.includes('code=') || window.location.hash.includes('access_token=')) {
+        router.push(`/reset-password${window.location.search}${window.location.hash}`);
         return;
       }
 
