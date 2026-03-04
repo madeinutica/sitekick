@@ -19,8 +19,9 @@ export default function ForgotPasswordPage() {
         setLoading(true)
         setError('')
 
-        // Use dynamic URL based on the environment to ensure the redirect token goes to the right place
-        const redirectUrl = `${window.location.origin}/reset-password`
+        // Redirect to the new auth callback route to exchange the PKCE code first
+        // It will then forward the user to the /reset-password page
+        const redirectUrl = `${window.location.origin}/auth/callback?next=/reset-password`
 
         const { error } = await supabase.auth.resetPasswordForEmail(email, {
             redirectTo: redirectUrl,
