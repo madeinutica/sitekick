@@ -19,9 +19,8 @@ export default function ForgotPasswordPage() {
         setLoading(true)
         setError('')
 
-        // Redirect to the new auth callback route to exchange the PKCE code first
-        // It will then forward the user to the /reset-password page
-        const redirectUrl = `${window.location.origin}/auth/callback?next=/reset-password`
+        // Point directly to reset-password. This avoids server-side routes that might be pre-clicked by email scanners.
+        const redirectUrl = `${window.location.origin}/reset-password`
 
         const { error } = await supabase.auth.resetPasswordForEmail(email, {
             redirectTo: redirectUrl,

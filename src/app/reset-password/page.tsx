@@ -15,24 +15,42 @@ function ResetPasswordForm() {
   const supabase = createClient()
 
   useEffect(() => {
-    // Check if we have the reset tokens in the URL query params
-    let accessToken = searchParams.get('access_token')
-    let refreshToken = searchParams.get('refresh_token')
+    const handleAuth = async () => {
+      // 1. Check for PKCE 'code' parameter (Next.js 15 SSR apps typically use this)
+      const code = searchParams.get('code')
+      if (code) {
+        const { error } = await supabase.auth.exchangeCodeForSession(code)
+        if (error) {
+          console.error("PKCE exchange error:", error.message)
+          setError(error.message)
+        }
+        return
+      }
 
-    // If not in query params, check the URL hash fragment (this is how Supabase normally sends Auth tokens)
-    if (!accessToken && typeof window !== 'undefined' && window.location.hash) {
-      const hashParams = new URLSearchParams(window.location.hash.substring(1))
-      accessToken = hashParams.get('access_token')
-      refreshToken = hashParams.get('refresh_token')
+      // 2. Check for traditional 'access_token' in query params
+      let accessToken = searchParams.get('access_token')
+      let refreshToken = searchParams.get('refresh_token')
+
+      // 3. Fallback to URL hash fragment (Supabase standard for hash-based redirects)
+      if (!accessToken && typeof window !== 'undefined' && window.location.hash) {
+        const hashParams = new URLSearchParams(window.location.hash.substring(1))
+        accessToken = hashParams.get('access_token')
+        refreshToken = hashParams.get('refresh_token')
+      }
+
+      if (accessToken && refreshToken) {
+        const { error } = await supabase.auth.setSession({
+          access_token: accessToken,
+          refresh_token: refreshToken
+        })
+        if (error) {
+          console.error("Session set error:", error.message)
+          setError(error.message)
+        }
+      }
     }
 
-    if (accessToken && refreshToken) {
-      // Set the session with the tokens from the email link
-      supabase.auth.setSession({
-        access_token: accessToken,
-        refresh_token: refreshToken
-      }).catch((err: Error) => console.error("Session set error", err))
-    }
+    handleAuth()
   }, [searchParams, supabase.auth])
 
   const handleResetPassword = async (e: React.FormEvent) => {
