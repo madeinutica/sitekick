@@ -41,7 +41,7 @@ export async function resetPassword(email: string) {
 
     try {
         await resend.emails.send({
-            from: 'Sitekick <noreply@sitekickapp.com>',
+            from: 'Sitekick <noreply@updates.sitekickapp.com>',
             to: email,
             subject: 'Reset your Sitekick password',
             html: `
