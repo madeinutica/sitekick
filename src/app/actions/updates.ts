@@ -7,7 +7,7 @@ import { headers } from 'next/headers'
 const resend = new Resend(process.env.RESEND_API_KEY)
 
 function buildEmailHtml(title: string, features: string[], bugFixes: string[], date: string) {
-    return `
+  return `
 <!DOCTYPE html>
 <html>
 <head>
@@ -74,78 +74,76 @@ function buildEmailHtml(title: string, features: string[], bugFixes: string[], d
 }
 
 export async function sendSystemUpdate(
-    title: string,
-    features: string[],
-    bugFixes: string[]
+  title: string,
+  features: string[],
+  bugFixes: string[]
 ): Promise<{ success?: boolean; sentCount?: number; error?: string }> {
-    const headerList = await headers()
-    const authHeader = headerList.get('x-user-id')
+  const headerList = await headers()
+  const authHeader = headerList.get('x-user-id')
 
-    // Use admin client to fetch all users
-    const supabaseAdmin = createClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.SUPABASE_SERVICE_ROLE_KEY!,
-        { auth: { autoRefreshToken: false, persistSession: false } }
-    )
+  // Use admin client to fetch all users
+  const supabaseAdmin = createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    { auth: { autoRefreshToken: false, persistSession: false } }
+  )
 
-    // Fetch all user emails from auth.users via admin API
-    const { data: { users }, error: usersError } = await supabaseAdmin.auth.admin.listUsers({ perPage: 1000 })
-    if (usersError) return { error: usersError.message }
+  // Fetch all user emails from auth.users via admin API
+  const { data: { users }, error: usersError } = await supabaseAdmin.auth.admin.listUsers({ perPage: 1000 })
+  if (usersError) return { error: usersError.message }
 
-    const emails = users
-        .filter(u => !!u.email)
-        .map(u => u.email as string)
+  const emails = users
+    .filter(u => !!u.email)
+    .map(u => u.email as string)
 
-    if (emails.length === 0) return { error: 'No users found to email.' }
+  if (emails.length === 0) return { error: 'No users found to email.' }
 
-    const date = new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })
-    const html = buildEmailHtml(title, features, bugFixes, date)
+  const date = new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })
+  const html = buildEmailHtml(title, features, bugFixes, date)
 
-    // Resend batch limit is 50 per call, so we send in batches
-    const BATCH_SIZE = 50
-    const batches = []
-    for (let i = 0; i < emails.length; i += BATCH_SIZE) {
-        batches.push(emails.slice(i, i + BATCH_SIZE))
+  // Build one email object per user so no recipient sees other addresses
+  const emailPayloads = emails.map(email => ({
+    from: 'Sitekick Updates <noreply@updates.sitekickapp.com>',
+    to: [email],
+    subject: `Sitekick Update: ${title}`,
+    html,
+  }))
+
+  try {
+    // Resend batch limit is 100 per call, so chunk if needed
+    const BATCH_SIZE = 100
+    for (let i = 0; i < emailPayloads.length; i += BATCH_SIZE) {
+      await resend.batch.send(emailPayloads.slice(i, i + BATCH_SIZE))
     }
+  } catch (err: any) {
+    return { error: `Failed to send emails: ${err.message}` }
+  }
 
-    try {
-        for (const batch of batches) {
-            await resend.emails.send({
-                from: 'Sitekick Updates <noreply@updates.sitekickapp.com>',
-                to: batch,
-                subject: `Sitekick Update: ${title}`,
-                html,
-            })
-        }
-    } catch (err: any) {
-        return { error: `Failed to send emails: ${err.message}` }
-    }
+  // Save to history
+  const { data: currentUser } = await supabaseAdmin.auth.admin.getUserById(authHeader ?? '')
+  await supabaseAdmin.from('system_updates').insert({
+    title,
+    features,
+    bug_fixes: bugFixes,
+    recipient_count: emails.length,
+    created_by: currentUser?.user?.id ?? null,
+  })
 
-    // Save to history
-    const { data: currentUser } = await supabaseAdmin.auth.admin.getUserById(authHeader ?? '')
-    await supabaseAdmin.from('system_updates').insert({
-        title,
-        features,
-        bug_fixes: bugFixes,
-        recipient_count: emails.length,
-        created_by: currentUser?.user?.id ?? null,
-    })
-
-    return { success: true, sentCount: emails.length }
+  return { success: true, sentCount: emails.length }
 }
 
 export async function getSystemUpdates() {
-    const supabaseAdmin = createClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.SUPABASE_SERVICE_ROLE_KEY!,
-        { auth: { autoRefreshToken: false, persistSession: false } }
-    )
-    const { data, error } = await supabaseAdmin
-        .from('system_updates')
-        .select('*')
-        .order('sent_at', { ascending: false })
-        .limit(20)
+  const supabaseAdmin = createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    { auth: { autoRefreshToken: false, persistSession: false } }
+  )
+  const { data, error } = await supabaseAdmin
+    .from('system_updates')
+    .select('*')
+    .order('sent_at', { ascending: false })
+    .limit(20)
 
-    if (error) return { error: error.message }
-    return { data }
+  if (error) return { error: error.message }
+  return { data }
 }
