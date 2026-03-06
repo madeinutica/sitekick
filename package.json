@@ -20,7 +20,8 @@
     "react": "19.2.0",
     "react-dom": "19.2.0",
     "react-map-gl": "^8.1.0",
-    "react-pdf": "^10.2.0"
+    "react-pdf": "^10.2.0",
+    "resend": "^6.9.3"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",

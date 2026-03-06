@@ -33,24 +33,36 @@ function ResetPasswordForm() {
     setError('')
 
     try {
-      // With 'implicit' flow the reset email contains tokens in the URL hash
-      // fragment (#access_token=...&refresh_token=...).
-      // We read those here so no PKCE code-verifier is ever needed.
+      // With our custom flow, the email link looks like:
+      //   /reset-password#access_token=HASHED_TOKEN&type=recovery
+      // We read that token and call verifyOtp to exchange it for a session.
+      // This completely avoids PKCE -- no code verifier required.
+
+      let hashToken: string | null = null
+      let tokenType: string | null = null
       let accessToken: string | null = null
       let refreshToken: string | null = null
 
       if (typeof window !== 'undefined' && window.location.hash) {
         const hashParams = new URLSearchParams(window.location.hash.substring(1))
+        hashToken = hashParams.get('access_token')
+        tokenType = hashParams.get('type')
         accessToken = hashParams.get('access_token')
         refreshToken = hashParams.get('refresh_token')
       }
 
-      // Fallback: query params (shouldn't happen with implicit flow, but keep for safety)
-      if (!accessToken) {
-        accessToken = searchParams.get('access_token')
-        refreshToken = searchParams.get('refresh_token')
+      // Check if this is a recovery token from admin.generateLink
+      if (hashToken && tokenType === 'recovery') {
+        const { error } = await supabase.auth.verifyOtp({
+          token_hash: hashToken,
+          type: 'recovery',
+        })
+        if (error) throw error
+        setReadyToReset(true)
+        return
       }
 
+      // Fallback: regular access_token + refresh_token pair (setSession)
       if (accessToken && refreshToken) {
         const { error } = await supabase.auth.setSession({
           access_token: accessToken,
@@ -58,18 +70,19 @@ function ResetPasswordForm() {
         })
         if (error) throw error
         setReadyToReset(true)
+        return
+      }
+
+      // Last resort: check if we already have a valid session
+      const { data } = await supabase.auth.getSession()
+      if (data.session) {
+        setReadyToReset(true)
       } else {
-        // No tokens found – maybe user already has a valid session
-        const { data } = await supabase.auth.getSession()
-        if (data.session) {
-          setReadyToReset(true)
-        } else {
-          setError('No valid reset session found. Your link may have expired. Please request a new one.')
-        }
+        setError('No valid reset session found. Your link may have expired. Please request a new one.')
       }
     } catch (err: any) {
       console.error('Auth verification error:', err.message)
-      setError(err.message || 'Verification failed')
+      setError(err.message || 'Verification failed. Please request a new reset link.')
     } finally {
       setVerifying(false)
     }
