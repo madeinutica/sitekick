@@ -185,6 +185,34 @@ export default function AdminDashboardPage() {
           />
         </div>
 
+        {/* Quick Nav */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-8">
+          <Link
+            href="/admin/updates"
+            className="group bg-white p-5 rounded-2xl border border-slate-200 hover:border-primary-red hover:shadow-xl hover:shadow-primary-red/5 transition-all duration-300 flex items-center gap-4"
+          >
+            <div className="w-12 h-12 rounded-xl bg-slate-50 group-hover:bg-primary-red/10 flex items-center justify-center text-2xl transition-colors">
+              📨
+            </div>
+            <div>
+              <h3 className="font-bold text-slate-900 group-hover:text-primary-red transition-colors">System Updates</h3>
+              <p className="text-sm text-slate-500 mt-0.5">Send weekly feature & fix emails</p>
+            </div>
+          </Link>
+          <Link
+            href="/admin/requests"
+            className="group bg-white p-5 rounded-2xl border border-slate-200 hover:border-primary-red hover:shadow-xl hover:shadow-primary-red/5 transition-all duration-300 flex items-center gap-4"
+          >
+            <div className="w-12 h-12 rounded-xl bg-slate-50 group-hover:bg-primary-red/10 flex items-center justify-center text-2xl transition-colors">
+              📋
+            </div>
+            <div>
+              <h3 className="font-bold text-slate-900 group-hover:text-primary-red transition-colors">Join Requests</h3>
+              <p className="text-sm text-slate-500 mt-0.5">Review pending company requests</p>
+            </div>
+          </Link>
+        </div>
+
         <div className="grid grid-cols-1 gap-8">
           {/* Recent Activity Feed */}
           <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
