@@ -33,44 +33,42 @@ function ResetPasswordForm() {
     setError('')
 
     try {
-      // 1. Check for PKCE 'code' parameter
-      const code = searchParams.get('code')
-      if (code) {
-        const { error } = await supabase.auth.exchangeCodeForSession(code)
-        if (error) throw error
-        setReadyToReset(true)
-        setVerifying(false)
-        return
-      }
+      // With 'implicit' flow the reset email contains tokens in the URL hash
+      // fragment (#access_token=...&refresh_token=...).
+      // We read those here so no PKCE code-verifier is ever needed.
+      let accessToken: string | null = null
+      let refreshToken: string | null = null
 
-      // 2. Check for traditional tokens
-      let accessToken = searchParams.get('access_token')
-      let refreshToken = searchParams.get('refresh_token')
-
-      if (!accessToken && typeof window !== 'undefined' && window.location.hash) {
+      if (typeof window !== 'undefined' && window.location.hash) {
         const hashParams = new URLSearchParams(window.location.hash.substring(1))
         accessToken = hashParams.get('access_token')
         refreshToken = hashParams.get('refresh_token')
       }
 
+      // Fallback: query params (shouldn't happen with implicit flow, but keep for safety)
+      if (!accessToken) {
+        accessToken = searchParams.get('access_token')
+        refreshToken = searchParams.get('refresh_token')
+      }
+
       if (accessToken && refreshToken) {
         const { error } = await supabase.auth.setSession({
           access_token: accessToken,
-          refresh_token: refreshToken
+          refresh_token: refreshToken,
         })
         if (error) throw error
         setReadyToReset(true)
       } else {
-        // If we reach here, we might already have a session or the link is invalid
+        // No tokens found – maybe user already has a valid session
         const { data } = await supabase.auth.getSession()
         if (data.session) {
           setReadyToReset(true)
         } else {
-          setError('No valid reset session found. Your link may have expired.')
+          setError('No valid reset session found. Your link may have expired. Please request a new one.')
         }
       }
     } catch (err: any) {
-      console.error("Auth verification error:", err.message)
+      console.error('Auth verification error:', err.message)
       setError(err.message || 'Verification failed')
     } finally {
       setVerifying(false)
