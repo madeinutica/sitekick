@@ -237,6 +237,8 @@ async function msGet<T>(endpoint: string, params?: Record<string, string>, confi
     headers: {
       'Authorization': auth,
       'Accept': 'application/json',
+      'DataServiceVersion': '2.0',
+      'MaxDataServiceVersion': '3.0',
     },
   })
 
