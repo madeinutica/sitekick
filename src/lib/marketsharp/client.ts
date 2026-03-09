@@ -243,12 +243,16 @@ async function msGet<T>(endpoint: string, params?: Record<string, string>, confi
   const maxRetries = 3
 
   for (let attempt = 0; attempt < maxRetries; attempt++) {
+    // Attempt 1 uses standard JSON (minimal).
+    // Subsequent attempts use verbose JSON as a fallback for MarketSharp server bugs.
+    const acceptHeader = attempt === 0 ? 'application/json' : 'application/json;odata=verbose'
+
     try {
       const response = await fetch(url, {
         method: 'GET',
         headers: {
           'Authorization': auth,
-          'Accept': 'application/json',
+          'Accept': acceptHeader,
           'DataServiceVersion': '2.0',
           'MaxDataServiceVersion': '3.0',
         },
@@ -256,12 +260,15 @@ async function msGet<T>(endpoint: string, params?: Record<string, string>, confi
 
       if (!response.ok) {
         const text = await response.text()
-        // If it's the "LinkedList" error, we retry
-        if (response.status === 400 && text.includes('LinkedList')) {
-          console.warn(`MarketSharp LinkedList error on attempt ${attempt + 1}/${maxRetries}. Retrying...`)
-          lastError = new Error(`MarketSharp server crash (LinkedList): ${text.substring(0, 500)}`)
-          // Exponential backoff: 500ms, 1500ms, 4500ms...
-          await new Promise(resolve => setTimeout(resolve, Math.pow(3, attempt) * 500))
+        // If it's a 400 (corrupt cache/LinkedList) or generic error, we retry with verbose format.
+        if (response.status === 400 || text.includes('LinkedList')) {
+          console.warn(`MarketSharp error (${response.status}) on attempt ${attempt + 1}/${maxRetries}. Retrying with ${attempt === 0 ? 'verbose' : 'backoff'}...`)
+          lastError = new Error(`MarketSharp API error ${response.status}: ${text.substring(0, 500)}`)
+
+          if (attempt === 0) continue // Retry immediately with verbose
+
+          // Exponential backoff for subsequent attempts
+          await new Promise(resolve => setTimeout(resolve, Math.pow(3, attempt - 1) * 1000))
           continue
         }
         throw new Error(`MarketSharp API error ${response.status}: ${text.substring(0, 1000)}`)
