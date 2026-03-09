@@ -104,22 +104,10 @@ export async function runSync(companyId: string, config: { companyId: string; ap
 
     for (const contact of msContacts) {
       try {
-        // Fetch address and phone for this contact
-        let address: MSAddress | null = null
-        let phone: MSContactPhone | null = null
-
-        try {
-          const addresses = await fetchContactAddresses(contact.id, config)
-          address = Array.isArray(addresses) && addresses.length > 0 ? addresses[0] : null
-        } catch { /* address fetch failed, continue */ }
-
-        try {
-          const phones = await fetchContactPhones(contact.id, config)
-          phone = Array.isArray(phones) && phones.length > 0 ? phones[0] : null
-        } catch { /* phone fetch failed, continue */ }
-
         const fullName = [contact.firstName, contact.lastName].filter(Boolean).join(' ')
-        const addressStr = address ? [address.line1, address.city, address.state, address.zip].filter(Boolean).join(', ') : ''
+        const addressStr = [contact.addressLine1, contact.city, contact.state, contact.zip]
+          .filter(Boolean)
+          .join(', ')
 
         // Upsert into ms_contacts table
         const { error } = await supabase
@@ -131,11 +119,11 @@ export async function runSync(companyId: string, config: { companyId: string; ap
             last_name: contact.lastName || '',
             full_name: fullName,
             email: contact.email1 || null,
-            phone: phone?.cellPhone || phone?.homePhone || phone?.workPhone || null,
+            phone: contact.cellPhone || contact.homePhone || contact.workPhone || null,
             address: addressStr,
-            city: address?.city || null,
-            state: address?.state || null,
-            zip: address?.zip || null,
+            city: contact.city || null,
+            state: contact.state || null,
+            zip: contact.zip || null,
             business_name: contact.businessName || null,
             source: contact.source || null,
             is_active: contact.isActive ?? true,
@@ -163,25 +151,21 @@ export async function runSync(companyId: string, config: { companyId: string; ap
       errors.push(`Failed to fetch jobs: ${err instanceof Error ? err.message : err}`)
     }
 
-    // Since we removed $expand=Contact (due to a MarketSharp server bug),
+    // Since we removed all sub-resource fetches (due to MarketSharp server bugs),
     // we resolve the contact info locally from our synced ms_contacts table.
     const uniqueContactIds = [...new Set(msJobs.map(j => j.contactId).filter(Boolean))]
-    const contactMap: Record<string, { firstName: string; lastName: string; email: string }> = {}
+    const contactMap: Record<string, any> = {}
 
     if (uniqueContactIds.length > 0) {
       const { data: contactsData } = await supabase
         .from('ms_contacts')
-        .select('marketsharp_id, first_name, last_name, email')
+        .select('*')
         .eq('company_id', companyId)
         .in('marketsharp_id', uniqueContactIds)
 
       if (contactsData) {
         contactsData.forEach(c => {
-          contactMap[c.marketsharp_id] = {
-            firstName: c.first_name || '',
-            lastName: c.last_name || '',
-            email: c.email || '',
-          }
+          contactMap[c.marketsharp_id] = c
         })
       }
     }
@@ -191,35 +175,11 @@ export async function runSync(companyId: string, config: { companyId: string; ap
         // Resolve contact from local map
         const resolvedContact = msJob.contactId ? contactMap[msJob.contactId] : null
 
-        // Resolve the contact's address if the job has no address
-        let contactAddress: MSAddress | null = null
-        let contactPhone: MSContactPhone | null = null
-        if (msJob.contactId) {
-          if (!msJob.addressLine1) {
-            try {
-              const addresses = await fetchContactAddresses(msJob.contactId, config)
-              contactAddress = Array.isArray(addresses) && addresses.length > 0 ? addresses[0] : null
-            } catch { /* ignore */ }
-          }
-          // Fetch phone for customer info
-          try {
-            const phones = await fetchContactPhones(msJob.contactId, config)
-            contactPhone = Array.isArray(phones) && phones.length > 0 ? phones[0] : null
-          } catch { /* ignore */ }
-        }
-
-        // Fetch contract data for this job
-        let contract: MSContract | null = null
-        try {
-          const contracts = await fetchJobContracts(msJob.id, config)
-          contract = Array.isArray(contracts) && contracts.length > 0 ? contracts[0] : null
-        } catch { /* ignore contract fetch failure */ }
-
-        const address = buildAddressString(contactAddress, msJob)
+        const address = buildAddressString(null, msJob) || resolvedContact?.address || ''
         const category = mapToCategory(msJob)
 
         // Build job name from customer last name + job type
-        const customerLastName = resolvedContact?.lastName || ''
+        const customerLastName = resolvedContact?.last_name || ''
         const jobType = msJob.name || msJob.type || 'Job'
         const jobDisplayName = customerLastName
           ? `${customerLastName} - ${jobType}`
@@ -237,9 +197,9 @@ export async function runSync(companyId: string, config: { companyId: string; ap
             job_type: msJob.type || null,
             status: msJob.status || null,
             address: address,
-            city: msJob.city || contactAddress?.city || null,
-            state: msJob.state || contactAddress?.state || null,
-            zip: msJob.zip || contactAddress?.zip || null,
+            city: msJob.city || resolvedContact?.city || null,
+            state: msJob.state || resolvedContact?.state || null,
+            zip: msJob.zip || resolvedContact?.zip || null,
             category: category,
             start_date: msJob.startDate || null,
             sale_date: msJob.saleDate || null,
@@ -256,9 +216,7 @@ export async function runSync(companyId: string, config: { companyId: string; ap
           jobsSynced++
         }
 
-        // Determine if this job belongs in the main jobs table:
-        // - Unfinished jobs (not "Installed"/"Completed" or no completed date)
-        // - Finished jobs completed within the last 30 days
+        // Determine if this job belongs in the main jobs table
         const completedStatuses = ['installed', 'completed', 'closed']
         const isFinished = completedStatuses.includes((msJob.status || '').toLowerCase()) || !!msJob.completedDate
         const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
@@ -273,15 +231,8 @@ export async function runSync(companyId: string, config: { companyId: string; ap
           .maybeSingle()
 
         if (shouldBeInMainTable) {
-          // Build the full data object with all available info
-          const customerName = resolvedContact
-            ? [resolvedContact.firstName, resolvedContact.lastName].filter(Boolean).join(' ')
-            : null
-          const customerEmail = resolvedContact?.email || null
-          const customerPhoneStr = contactPhone?.cellPhone || contactPhone?.homePhone || contactPhone?.workPhone || null
-
           const jobData = {
-            company_id: companyId, // Ensure company assignment
+            company_id: companyId,
             job_name: jobDisplayName,
             address: address,
             category: category,
@@ -291,56 +242,32 @@ export async function runSync(companyId: string, config: { companyId: string; ap
             sale_date: msJob.saleDate || null,
             start_date: msJob.startDate || null,
             completed_date: msJob.completedDate || null,
-            customer_name: customerName,
-            customer_email: customerEmail,
-            customer_phone: customerPhoneStr,
-            contract_total: contract?.totalContract ? parseFloat(contract.totalContract) : contract?.cashTotal ? parseFloat(contract.cashTotal) : null,
-            contract_balance_due: contract?.balanceDue ? parseFloat(contract.balanceDue) : null,
-            contract_finance_total: contract?.financeTotal ? parseFloat(contract.financeTotal) : null,
-            contract_cash_total: contract?.cashTotal ? parseFloat(contract.cashTotal) : null,
-            contract_status: contract?.status || null,
-            contract_date: contract?.contractDate || null,
-            payment_type: contract?.paymentType || null,
+            customer_name: resolvedContact?.full_name || null,
+            customer_email: resolvedContact?.email || null,
+            customer_phone: resolvedContact?.phone || null,
+            // Contract info is unavailable due to MarketSharp API bug
+            contract_total: null,
+            contract_balance_due: null,
+            contract_status: null,
+            contract_date: null,
           }
 
           if (!existingLink) {
-            // Create a new job in the main jobs table
-            const { error: jobError } = await supabase
-              .from('jobs')
-              .insert({
-                ...jobData,
-                user_id: triggeringUserId || null, // Attribute to triggering user if available
-                marketsharp_job_id: msJob.id,
-                marketsharp_contact_id: msJob.contactId || null,
-              })
-
-            if (jobError) {
-              errors.push(`Job link ${msJob.id}: ${jobError.message}`)
-            }
+            await supabase.from('jobs').insert({
+              ...jobData,
+              user_id: triggeringUserId || null,
+              marketsharp_job_id: msJob.id,
+              marketsharp_contact_id: msJob.contactId || null,
+            })
           } else {
-            // Update existing linked job
-            // Check if it belongs to the same company
-            const { error: updateError } = await supabase
-              .from('jobs')
-              .update({ ...jobData, is_archived: false }) // Reinstate if it was archived
+            await supabase.from('jobs')
+              .update({ ...jobData, is_archived: false })
               .eq('marketsharp_job_id', msJob.id)
-              .eq('company_id', companyId) // Safety check
-
-            if (updateError) {
-              errors.push(`Job update ${msJob.id}: ${updateError.message}`)
-            }
           }
         } else if (existingLink) {
-          // Job is finished and older than 30 days — archive instead of delete
-          const { error: archiveError } = await supabase
-            .from('jobs')
+          await supabase.from('jobs')
             .update({ is_archived: true })
             .eq('marketsharp_job_id', msJob.id)
-            .eq('company_id', companyId)
-
-          if (archiveError) {
-            errors.push(`Job archiving ${msJob.id}: ${archiveError.message}`)
-          }
         }
       } catch (err) {
         errors.push(`Job ${msJob.id}: ${err instanceof Error ? err.message : err}`)

@@ -103,6 +103,13 @@ export interface MSContact {
   email3?: string
   website1?: string
   source?: string
+  addressLine1?: string
+  city?: string
+  state?: string
+  zip?: string
+  cellPhone?: string
+  homePhone?: string
+  workPhone?: string
   creationDate?: string
   isActive?: boolean
   lastUpdate?: string
