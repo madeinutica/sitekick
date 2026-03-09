@@ -301,7 +301,7 @@ export async function fetchContactPhones(contactOid: string, config?: MarketShar
  * Includes $expand=Contact to get customer name inline.
  */
 export async function fetchJobs(filter?: string, config?: MarketSharpConfig): Promise<MSJob[]> {
-  const params: Record<string, string> = { '$expand': 'Contact' }
+  const params: Record<string, string> = {}
   if (filter) params['$filter'] = filter
   return msGet<MSJob[]>('Jobs', params, config)
 }

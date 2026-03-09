@@ -163,8 +163,34 @@ export async function runSync(companyId: string, config: { companyId: string; ap
       errors.push(`Failed to fetch jobs: ${err instanceof Error ? err.message : err}`)
     }
 
+    // Since we removed $expand=Contact (due to a MarketSharp server bug),
+    // we resolve the contact info locally from our synced ms_contacts table.
+    const uniqueContactIds = [...new Set(msJobs.map(j => j.contactId).filter(Boolean))]
+    const contactMap: Record<string, { firstName: string; lastName: string; email: string }> = {}
+
+    if (uniqueContactIds.length > 0) {
+      const { data: contactsData } = await supabase
+        .from('ms_contacts')
+        .select('marketsharp_id, first_name, last_name, email')
+        .eq('company_id', companyId)
+        .in('marketsharp_id', uniqueContactIds)
+
+      if (contactsData) {
+        contactsData.forEach(c => {
+          contactMap[c.marketsharp_id] = {
+            firstName: c.first_name || '',
+            lastName: c.last_name || '',
+            email: c.email || '',
+          }
+        })
+      }
+    }
+
     for (const msJob of msJobs) {
       try {
+        // Resolve contact from local map
+        const resolvedContact = msJob.contactId ? contactMap[msJob.contactId] : null
+
         // Resolve the contact's address if the job has no address
         let contactAddress: MSAddress | null = null
         let contactPhone: MSContactPhone | null = null
@@ -193,7 +219,7 @@ export async function runSync(companyId: string, config: { companyId: string; ap
         const category = mapToCategory(msJob)
 
         // Build job name from customer last name + job type
-        const customerLastName = msJob.Contact?.lastName || ''
+        const customerLastName = resolvedContact?.lastName || ''
         const jobType = msJob.name || msJob.type || 'Job'
         const jobDisplayName = customerLastName
           ? `${customerLastName} - ${jobType}`
@@ -248,8 +274,10 @@ export async function runSync(companyId: string, config: { companyId: string; ap
 
         if (shouldBeInMainTable) {
           // Build the full data object with all available info
-          const customerName = [msJob.Contact?.firstName, msJob.Contact?.lastName].filter(Boolean).join(' ') || null
-          const customerEmail = msJob.Contact?.email1 || null
+          const customerName = resolvedContact
+            ? [resolvedContact.firstName, resolvedContact.lastName].filter(Boolean).join(' ')
+            : null
+          const customerEmail = resolvedContact?.email || null
           const customerPhoneStr = contactPhone?.cellPhone || contactPhone?.homePhone || contactPhone?.workPhone || null
 
           const jobData = {
