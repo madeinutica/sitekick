@@ -232,38 +232,57 @@ async function msGet<T>(endpoint: string, params?: Record<string, string>, confi
     url += `?${searchParams.toString()}`
   }
 
-  const response = await fetch(url, {
-    method: 'GET',
-    headers: {
-      'Authorization': auth,
-      'Accept': 'application/json',
-      'DataServiceVersion': '2.0',
-      'MaxDataServiceVersion': '3.0',
-    },
-  })
+  let lastError: Error | null = null
+  const maxRetries = 3
 
-  if (!response.ok) {
-    const text = await response.text()
-    throw new Error(`MarketSharp API error ${response.status}: ${text}`)
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          'Authorization': auth,
+          'Accept': 'application/json',
+          'DataServiceVersion': '2.0',
+          'MaxDataServiceVersion': '3.0',
+        },
+      })
+
+      if (!response.ok) {
+        const text = await response.text()
+        // If it's the "LinkedList" error, we retry
+        if (response.status === 400 && text.includes('LinkedList')) {
+          console.warn(`MarketSharp LinkedList error on attempt ${attempt + 1}/${maxRetries}. Retrying...`)
+          lastError = new Error(`MarketSharp server crash (LinkedList): ${text.substring(0, 500)}`)
+          // Exponential backoff: 500ms, 1500ms, 4500ms...
+          await new Promise(resolve => setTimeout(resolve, Math.pow(3, attempt) * 500))
+          continue
+        }
+        throw new Error(`MarketSharp API error ${response.status}: ${text.substring(0, 1000)}`)
+      }
+
+      const data = await response.json()
+      // OData WCF responses use varying envelope formats:
+      //   - Collections may be: { d: [...] } or { d: { results: [...] } }
+      //   - Single entities may be: { d: { ... } }
+      //   - Newer OData may use: { value: [...] }
+      let result: unknown
+      if (data.d) {
+        if (Array.isArray(data.d)) result = data.d
+        else if (data.d.results && Array.isArray(data.d.results)) result = data.d.results
+        else result = data.d
+      } else if (data.value) {
+        result = data.value
+      } else {
+        result = data
+      }
+      // Parse OData date formats and strip deferred navigation properties
+      return parseODataDates(result) as T
+    } catch (err) {
+      if (attempt === maxRetries - 1) throw lastError || err
+    }
   }
 
-  const data = await response.json()
-  // OData WCF responses use varying envelope formats:
-  //   - Collections may be: { d: [...] } or { d: { results: [...] } }
-  //   - Single entities may be: { d: { ... } }
-  //   - Newer OData may use: { value: [...] }
-  let result: unknown
-  if (data.d) {
-    if (Array.isArray(data.d)) result = data.d
-    else if (data.d.results && Array.isArray(data.d.results)) result = data.d.results
-    else result = data.d
-  } else if (data.value) {
-    result = data.value
-  } else {
-    result = data
-  }
-  // Parse OData date formats and strip deferred navigation properties
-  return parseODataDates(result) as T
+  throw lastError || new Error('Unknown MarketSharp API error')
 }
 
 /**
