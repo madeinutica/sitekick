@@ -300,12 +300,13 @@ async function msGet<T>(endpoint: string, params?: Record<string, string>, confi
 }
 
 /**
- * Fetch all contacts (limit 5000 per MarketSharp API)
+ * Fetch contacts from MarketSharp.
  */
 export async function fetchContacts(filter?: string, config?: MarketSharpConfig): Promise<MSContact[]> {
   const params: Record<string, string> = {}
   if (filter) params['$filter'] = filter
-  return msGet<MSContact[]>('Contacts', Object.keys(params).length > 0 ? params : undefined, config)
+
+  return msGet<MSContact[]>('Customers', Object.keys(params).length > 0 ? params : undefined, config)
 }
 
 /**

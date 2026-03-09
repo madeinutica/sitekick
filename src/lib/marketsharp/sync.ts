@@ -86,20 +86,38 @@ export async function runSync(companyId: string, config: { companyId: string; ap
   const supabase = getSupabaseAdmin()
 
   try {
+    // ─── Step 0: Determine Sync Type (Full vs Delta) ──────────────────
+    // Look for the last successful sync start time to use as a delta threshold
+    const { data: lastSync } = await supabase
+      .from('ms_sync_log')
+      .select('started_at')
+      .eq('company_id', companyId)
+      .eq('status', 'success')
+      .order('started_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+
+    let filter: string | undefined = undefined
+    if (lastSync?.started_at) {
+      // MarketSharp OData dates must be YYYY-MM-DDTHH:MM:SS
+      const lastDate = new Date(lastSync.started_at)
+      // Subtract a 5-minute buffer to account for clock drift or mid-sync updates
+      const bufferDate = new Date(lastDate.getTime() - 5 * 60 * 1000)
+      const dateStr = bufferDate.toISOString().split('.')[0]
+      filter = `lastUpdate ge datetime'${dateStr}'`
+      console.log(`[MarketSharp] Performing delta sync using filter: ${filter}`)
+    } else {
+      console.log(`[MarketSharp] No previous successful sync found. Performing full sync.`)
+    }
+
     // ─── Step 1: Sync Contacts ───────────────────────────────────────
     let msContacts: MSContact[] = []
     try {
-      msContacts = await fetchCustomers(config)
+      // Use the unified fetchContacts which now correctly handles filters and fallbacks
+      msContacts = await fetchContacts(filter, config)
       if (!Array.isArray(msContacts)) msContacts = []
     } catch (err) {
-      const msg = `Failed to fetch customers, trying all contacts: ${err instanceof Error ? err.message : err}`
-      errors.push(msg)
-      try {
-        msContacts = await fetchContacts(undefined, config)
-        if (!Array.isArray(msContacts)) msContacts = []
-      } catch (err2) {
-        errors.push(`Failed to fetch contacts: ${err2 instanceof Error ? err2.message : err2}`)
-      }
+      errors.push(`Failed to fetch contacts: ${err instanceof Error ? err.message : err}`)
     }
 
     for (const contact of msContacts) {
@@ -145,7 +163,7 @@ export async function runSync(companyId: string, config: { companyId: string; ap
     // ─── Step 2: Sync Jobs ────────────────────────────────────────────
     let msJobs: MSJob[] = []
     try {
-      msJobs = await fetchJobs(undefined, config)
+      msJobs = await fetchJobs(filter, config)
       if (!Array.isArray(msJobs)) msJobs = []
     } catch (err) {
       errors.push(`Failed to fetch jobs: ${err instanceof Error ? err.message : err}`)
