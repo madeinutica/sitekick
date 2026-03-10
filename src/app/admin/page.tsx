@@ -111,13 +111,13 @@ export default function AdminDashboardPage() {
       const roles = (rolesData as unknown as { roles: { name: string } }[])?.map(ur => ur.roles?.name).filter(Boolean) || []
 
       // Redirect Company Admins to the User Management page
-      if (roles.includes('company_admin') && !roles.includes('super_admin') && !roles.includes('brand_ambassador')) {
+      if (roles.includes('company_admin') && !roles.includes('super_admin')) {
         router.push('/dashboard/user-management')
         return
       }
 
       // Strictly only platform-level admins past this point
-      if (!roles.includes('super_admin') && !roles.includes('brand_ambassador')) {
+      if (!roles.includes('super_admin')) {
         router.push('/')
         return
       }
@@ -199,56 +199,45 @@ export default function AdminDashboardPage() {
               <p className="text-sm text-slate-500 mt-0.5">Send weekly feature & fix emails</p>
             </div>
           </Link>
-          <Link
-            href="/admin/requests"
-            className="group bg-white p-5 rounded-2xl border border-slate-200 hover:border-primary-red hover:shadow-xl hover:shadow-primary-red/5 transition-all duration-300 flex items-center gap-4"
-          >
-            <div className="w-12 h-12 rounded-xl bg-slate-50 group-hover:bg-primary-red/10 flex items-center justify-center text-2xl transition-colors">
-              📋
-            </div>
-            <div>
-              <h3 className="font-bold text-slate-900 group-hover:text-primary-red transition-colors">Join Requests</h3>
-              <p className="text-sm text-slate-500 mt-0.5">Review pending company requests</p>
-            </div>
-          </Link>
-        </div>
+        </Link>
+      </div>
 
-        <div className="grid grid-cols-1 gap-8">
-          {/* Recent Activity Feed */}
-          <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
-            <h2 className="text-lg font-bold text-slate-900 mb-6 flex items-center gap-2">
-              <svg className="w-5 h-5 text-primary-red" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-              Recent User Activity
-            </h2>
-            <div className="space-y-6">
-              {recentActivity.length > 0 ? (
-                recentActivity.map((act) => (
-                  <div key={act.id} className="flex gap-4">
-                    <div className="shrink-0 w-10 h-10 rounded-full flex items-center justify-center bg-blue-50 text-blue-600">
-                      <SmallUserIcon />
-                    </div>
-                    <div>
-                      <p className="text-sm font-semibold text-slate-900">{act.title}</p>
-                      <p className="text-xs text-slate-500 mt-0.5">
-                        {act.description}
-                        {act.company && <span className="ml-1 text-primary-red font-medium">({act.company})</span>}
-                      </p>
-                      <p className="text-[10px] text-slate-400 mt-1 uppercase tracking-wider font-bold">
-                        {new Date(act.timestamp).toLocaleDateString()}
-                      </p>
-                    </div>
+      <div className="grid grid-cols-1 gap-8">
+        {/* Recent Activity Feed */}
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
+          <h2 className="text-lg font-bold text-slate-900 mb-6 flex items-center gap-2">
+            <svg className="w-5 h-5 text-primary-red" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            Recent User Activity
+          </h2>
+          <div className="space-y-6">
+            {recentActivity.length > 0 ? (
+              recentActivity.map((act) => (
+                <div key={act.id} className="flex gap-4">
+                  <div className="shrink-0 w-10 h-10 rounded-full flex items-center justify-center bg-blue-50 text-blue-600">
+                    <SmallUserIcon />
                   </div>
-                ))
-              ) : (
-                <p className="text-sm text-slate-400 text-center py-10">No recent activity found.</p>
-              )}
-            </div>
+                  <div>
+                    <p className="text-sm font-semibold text-slate-900">{act.title}</p>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      {act.description}
+                      {act.company && <span className="ml-1 text-primary-red font-medium">({act.company})</span>}
+                    </p>
+                    <p className="text-[10px] text-slate-400 mt-1 uppercase tracking-wider font-bold">
+                      {new Date(act.timestamp).toLocaleDateString()}
+                    </p>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <p className="text-sm text-slate-400 text-center py-10">No recent activity found.</p>
+            )}
           </div>
         </div>
       </div>
     </div>
+    </div >
   )
 }
 
@@ -320,11 +309,6 @@ const CompanyIcon = () => (
   </svg>
 )
 
-const RequestIcon = () => (
-  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" />
-  </svg>
-)
 
 const UserManageIcon = () => (
   <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
