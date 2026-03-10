@@ -65,7 +65,7 @@ function DashboardPageContent() {
 
     const roles = (userRolesData as unknown as { roles: { name: string } }[])?.map(ur => ur.roles?.name).filter(Boolean) || []
     setUserRoles(roles)
-    const globalAdmin = roles.includes('super_admin') || roles.includes('brand_ambassador')
+    const globalAdmin = roles.includes('super_admin')
     setIsGlobalAdmin(globalAdmin)
     const companyAdmin = roles.includes('company_admin')
     setIsCompAdmin(companyAdmin)
@@ -120,7 +120,7 @@ function DashboardPageContent() {
       .eq('user_id', userId)
 
     const roles = (userRolesData as unknown as { roles: { name: string } }[])?.map(ur => ur.roles?.name).filter(Boolean) || []
-    const isGlobalAdmin = roles.includes('super_admin') || roles.includes('brand_ambassador')
+    const isGlobalAdmin = roles.includes('super_admin')
     const isCompanyAdmin = roles.includes('company_admin')
 
     setIsSuperUser(isGlobalAdmin || isCompanyAdmin)

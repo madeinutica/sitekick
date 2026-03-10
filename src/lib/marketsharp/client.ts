@@ -223,6 +223,17 @@ export interface MSContract {
   isActive?: boolean
 }
 
+export interface MSAttachment {
+  id: string
+  jobId: string
+  name: string
+  description?: string
+  fileType?: string
+  lastUpdate?: string
+  createdDate?: string
+  isDeleted?: boolean
+}
+
 // ─── API Methods ───────────────────────────────────────────────────────
 
 /**
@@ -393,6 +404,13 @@ export async function fetchContracts(filter?: string, config?: MarketSharpConfig
  */
 export async function fetchJobContracts(jobId: string, config?: MarketSharpConfig): Promise<MSContract[]> {
   return msGet<MSContract[]>(`Jobs('${jobId}')/Contract`, undefined, config)
+}
+
+/**
+ * Fetch attachments for a specific job by job ID
+ */
+export async function fetchJobAttachments(jobId: string, config?: MarketSharpConfig): Promise<MSAttachment[]> {
+  return msGet<MSAttachment[]>(`Jobs('${jobId}')/JobAttachment`, undefined, config)
 }
 
 /**

@@ -14,7 +14,7 @@ import 'mapbox-gl/dist/mapbox-gl.css'
 // Force dynamic rendering to avoid static generation issues
 export const dynamic = 'force-dynamic'
 
-import { syncPhotoToMarketSharp } from '@/app/actions/marketsharp-actions'
+import { syncPhotoToMarketSharp, syncDocumentToMarketSharp } from '@/app/actions/marketsharp-actions'
 
 // Clean job name by removing "Job-1", "Job1", "Job 1" etc. suffixes
 function cleanJobName(name: string): string {
@@ -150,7 +150,7 @@ function JobNotesSection({ jobId, user, jobOwnerId, userRoles }: { jobId: string
   }
 
   // Check if user can comment (job owner, admin, or assigned users)
-  const canComment = userRoles.some(role => ['super_admin', 'company_admin', 'brand_ambassador', 'rep', 'measure_tech', 'installer'].includes(role.name)) ||
+  const canComment = userRoles.some(role => ['super_admin', 'company_admin', 'rep', 'measure_tech', 'installer'].includes(role.name)) ||
     (user && jobOwnerId && user.id === jobOwnerId)
 
   return (
@@ -287,6 +287,8 @@ type JobPhoto = {
   latitude?: number
   longitude?: number
   location_accuracy?: number
+  ms_sync_status?: 'pending' | 'synced' | 'failed'
+  ms_sync_at?: string
 }
 
 type JobDocument = {
@@ -298,6 +300,8 @@ type JobDocument = {
   uploaded_by: string
   created_at: string
   uploader_name?: string
+  ms_sync_status?: 'pending' | 'synced' | 'failed'
+  ms_sync_at?: string
 }
 
 export default function JobDetailPage() {
@@ -392,7 +396,7 @@ export default function JobDetailPage() {
 
     // Security Check: If not an admin, verify assignment
     const roleNames = roles?.map(r => r.name) || []
-    const hasAdminPrivileges = roleNames.some(role => ['super_admin', 'company_admin', 'brand_ambassador'].includes(role))
+    const hasAdminPrivileges = roleNames.some(role => ['super_admin', 'company_admin'].includes(role))
 
     if (!hasAdminPrivileges) {
       const { data: assignment, error: assignmentError } = await supabase
@@ -495,11 +499,11 @@ export default function JobDetailPage() {
           return prevNames === currentNames ? prev : roles
         })
 
-        setIsGlobalAdmin(roles.some(r => ['super_admin', 'brand_ambassador'].includes(r.name)))
+        setIsGlobalAdmin(roles.some(r => r.name === 'super_admin'))
         const companyAdmin = roles.some(r => r.name === 'company_admin')
         setIsCompAdmin(companyAdmin)
 
-        const globalAdmin = roles.some(r => ['super_admin', 'brand_ambassador'].includes(r.name))
+        const globalAdmin = roles.some(r => r.name === 'super_admin')
         const hasAdminRole = globalAdmin || companyAdmin
 
         // If company admin, check for pending join requests
@@ -513,7 +517,7 @@ export default function JobDetailPage() {
         }
 
         // If super user or has appropriate roles, fetch all users for assignment
-        const canAssign = profileData.is_super_user || roles.some(role => ['super_admin', 'company_admin', 'brand_ambassador'].includes(role.name))
+        const canAssign = profileData.is_super_user || roles.some(role => ['super_admin', 'company_admin'].includes(role.name))
         if (canAssign) {
           const { data: usersData } = await supabase
             .from('profiles')
@@ -873,6 +877,17 @@ export default function JobDetailPage() {
 
       // Refresh documents
       await fetchDocuments()
+
+      // Trigger background sync to MarketSharp
+      const { data: newDoc }: { data: any } = await supabase
+        .from('job_documents')
+        .select('id')
+        .eq('file_path', fileName)
+        .single()
+
+      if (newDoc?.id) {
+        syncDocumentToMarketSharp(newDoc.id).catch(e => console.error('Document background sync failed:', e))
+      }
 
     } catch (error) {
       console.error('Document upload error:', error)
@@ -2522,6 +2537,30 @@ export default function JobDetailPage() {
                             {photo.photo_type}
                           </span>
                         )}
+                        {/* Sync Status Icon */}
+                        <div className={`px-2 py-1 text-[10px] font-bold rounded-full flex items-center gap-1 shadow-sm ${photo.ms_sync_status === 'synced' ? 'bg-green-100 text-green-700' :
+                          photo.ms_sync_status === 'failed' ? 'bg-red-100 text-red-700' :
+                            'bg-amber-100 text-amber-700'
+                          }`}
+                          title={photo.ms_sync_status === 'synced' ? `Synced to MarketSharp at ${photo.ms_sync_at ? new Date(photo.ms_sync_at).toLocaleString() : 'N/A'}` :
+                            photo.ms_sync_status === 'failed' ? 'Sync failed' : 'Syncing to MarketSharp...'}
+                        >
+                          {photo.ms_sync_status === 'synced' ? (
+                            <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                              <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                            </svg>
+                          ) : photo.ms_sync_status === 'failed' ? (
+                            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                            </svg>
+                          ) : (
+                            <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
+                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                            </svg>
+                          )}
+                          {photo.ms_sync_status === 'synced' ? 'MS' : photo.ms_sync_status === 'failed' ? 'Error' : 'Syncing'}
+                        </div>
                         {photo.latitude && photo.longitude && (
                           <span className="px-2 py-1 text-xs font-semibold rounded-full bg-orange-500 text-white flex items-center gap-1">
                             <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
@@ -2888,10 +2927,40 @@ export default function JobDetailPage() {
               {/* Document Header */}
               <div className="p-4 bg-slate-50 border-b border-slate-200">
                 <div className="flex items-center justify-between">
-                  <div>
-                    <h3 className="font-semibold text-slate-900 truncate">{selectedDocument.file_name}</h3>
-                    <p className="text-sm text-slate-600">
-                      {formatFileSize(selectedDocument.file_size)} • Uploaded by {selectedDocument.uploader_name}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <p className="text-sm font-medium text-slate-900 truncate">
+                        {selectedDocument.file_name}
+                      </p>
+                      {/* Document Sync Status */}
+                      {selectedDocument.ms_sync_status && (
+                        <div className={`px-1.5 py-0.5 text-[10px] font-bold rounded flex items-center gap-1 shrink-0 ${selectedDocument.ms_sync_status === 'synced' ? 'bg-green-100 text-green-700' :
+                          selectedDocument.ms_sync_status === 'failed' ? 'bg-red-100 text-red-700' :
+                            'bg-amber-100 text-amber-700'
+                          }`}
+                          title={selectedDocument.ms_sync_status === 'synced' ? `Synced to MarketSharp at ${selectedDocument.ms_sync_at ? new Date(selectedDocument.ms_sync_at).toLocaleString() : 'N/A'}` :
+                            selectedDocument.ms_sync_status === 'failed' ? 'Sync failed' : 'Syncing to MarketSharp...'}
+                        >
+                          {selectedDocument.ms_sync_status === 'synced' ? (
+                            <svg className="w-2.5 h-2.5" fill="currentColor" viewBox="0 0 20 20">
+                              <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                            </svg>
+                          ) : selectedDocument.ms_sync_status === 'failed' ? (
+                            <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                            </svg>
+                          ) : (
+                            <svg className="w-2.5 h-2.5 animate-spin" fill="none" viewBox="0 0 24 24">
+                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                            </svg>
+                          )}
+                          {selectedDocument.ms_sync_status === 'synced' ? 'MS' : selectedDocument.ms_sync_status === 'failed' ? 'Error' : 'Syncing'}
+                        </div>
+                      )}
+                    </div>
+                    <p className="text-xs text-slate-500">
+                      {formatFileSize(selectedDocument.file_size)} • {selectedDocument.uploader_name || 'System'} • {new Date(selectedDocument.created_at).toLocaleDateString()}
                     </p>
                   </div>
                   <div className="flex gap-2">

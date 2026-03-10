@@ -33,7 +33,7 @@ export default function SettingsPage() {
             const roles = (rolesData as unknown as { roles: { name: string } }[])?.map(ur => ur.roles?.name).filter(Boolean) || []
 
             // Super Admins shouldn't have access to this page as per user request
-            if (roles.includes('super_admin') || roles.includes('brand_ambassador')) {
+            if (roles.includes('super_admin')) {
                 router.push('/admin')
                 return
             }

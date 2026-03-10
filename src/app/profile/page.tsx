@@ -317,17 +317,17 @@ export default function ProfilePage() {
               <div className="flex flex-wrap gap-2">
                 {userRoles.length > 0 ? (
                   userRoles.map((role) => {
-                    const isSuper = role === 'super_admin' || role === 'brand_ambassador';
+                    const isSuper = role === 'super_admin';
                     const isAdmin = role === 'company_admin';
 
                     return (
                       <span
                         key={role}
                         className={`px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider border translate-y-[-1px] transition-all hover:translate-y-[-2px] hover:shadow-sm ${isSuper
-                            ? 'bg-primary-red/5 text-primary-red border-primary-red/20 shadow-primary-red/5'
-                            : isAdmin
-                              ? 'bg-slate-900 text-white border-slate-900 shadow-slate-900/10'
-                              : 'bg-slate-100 text-slate-700 border-slate-200'
+                          ? 'bg-primary-red/5 text-primary-red border-primary-red/20 shadow-primary-red/5'
+                          : isAdmin
+                            ? 'bg-slate-900 text-white border-slate-900 shadow-slate-900/10'
+                            : 'bg-slate-100 text-slate-700 border-slate-200'
                           }`}
                       >
                         {role.replace('_', ' ')}

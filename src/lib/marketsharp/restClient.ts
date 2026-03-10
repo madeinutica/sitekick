@@ -101,3 +101,43 @@ export async function uploadJobAttachment(
 
     return await response.json()
 }
+
+/**
+ * Download an attachment from MarketSharp
+ */
+export async function downloadJobAttachment(
+    config: MarketSharpConfig,
+    marketsharpJobId: string,
+    attachmentId: string
+): Promise<{ buffer: Buffer; contentType: string; fileName: string }> {
+    const token = await getAccessToken(config)
+    const baseUrl = config.baseUrl || DEFAULT_REST_URL
+
+    const url = `${baseUrl}/companies/${config.companyId}/jobs/${marketsharpJobId}/attachments/${attachmentId}`
+
+    const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+            'Authorization': `Bearer ${token}`,
+        },
+    })
+
+    if (!response.ok) {
+        const text = await response.text()
+        throw new Error(`MarketSharp Download Error ${response.status}: ${text}`)
+    }
+
+    // Get filename from Content-Disposition header if available
+    const contentDisposition = response.headers.get('Content-Disposition')
+    let fileName = `attachment_${attachmentId}`
+    if (contentDisposition) {
+        const match = contentDisposition.match(/filename="?([^"]+)"?/)
+        if (match) fileName = match[1]
+    }
+
+    const contentType = response.headers.get('Content-Type') || 'application/octet-stream'
+    const arrayBuffer = await response.arrayBuffer()
+    const buffer = Buffer.from(arrayBuffer)
+
+    return { buffer, contentType, fileName }
+}

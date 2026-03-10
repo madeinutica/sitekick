@@ -199,7 +199,6 @@ export default function AdminDashboardPage() {
               <p className="text-sm text-slate-500 mt-0.5">Send weekly feature & fix emails</p>
             </div>
           </Link>
-        </Link>
       </div>
 
       <div className="grid grid-cols-1 gap-8">

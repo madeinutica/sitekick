@@ -13,12 +13,15 @@ import {
   fetchJobs,
   fetchCustomers,
   fetchJobContracts,
+  fetchJobAttachments,
   type MSContact,
   type MSJob,
   type MSAddress,
   type MSContactPhone,
   type MSContract,
+  type MSAttachment,
 } from './client'
+import { downloadJobAttachment } from './restClient'
 
 function getSupabaseAdmin() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL!
@@ -289,6 +292,73 @@ export async function runSync(companyId: string, config: { companyId: string; ap
           await supabase.from('jobs')
             .update({ is_archived: true })
             .eq('marketsharp_job_id', msJob.id)
+        }
+
+        // ─── Step 2b: Sync Attachments from MarketSharp (Two-Way Sync) ──
+        try {
+          const msAttachments = await fetchJobAttachments(msJob.id, config)
+          if (Array.isArray(msAttachments) && msAttachments.length > 0) {
+            for (const msAtt of msAttachments) {
+              // Check if we already have this attachment by MS ID
+              const { data: existingPhoto } = await supabase
+                .from('job_photos')
+                .select('id')
+                .eq('marketsharp_attachment_id', msAtt.id)
+                .maybeSingle()
+
+              const { data: existingDoc } = await supabase
+                .from('job_documents')
+                .select('id')
+                .eq('marketsharp_attachment_id', msAtt.id)
+                .maybeSingle()
+
+              if (!existingPhoto && !existingDoc) {
+                // Pull attachment from MS
+                try {
+                  const { buffer, contentType, fileName } = await downloadJobAttachment(config, msJob.id, msAtt.id)
+
+                  // Determine if it's a photo or document based on content type
+                  const isPhoto = contentType.startsWith('image/')
+                  const bucket = isPhoto ? 'job_photos' : 'job-documents'
+                  const filePath = `${msJob.id}/${msAtt.id}_${fileName}`
+
+                  const { error: uploadError } = await supabase.storage
+                    .from(bucket)
+                    .upload(filePath, buffer, { contentType, upsert: true })
+
+                  if (!uploadError) {
+                    if (isPhoto) {
+                      const { data: publicUrlData } = supabase.storage.from(bucket).getPublicUrl(filePath)
+                      await supabase.from('job_photos').insert({
+                        job_id: existingLink?.id || (await supabase.from('jobs').select('id').eq('marketsharp_job_id', msJob.id).single()).data?.id,
+                        image_url: publicUrlData.publicUrl,
+                        caption: msAtt.description || msAtt.name,
+                        marketsharp_attachment_id: msAtt.id,
+                        ms_sync_status: 'synced',
+                        ms_sync_at: new Date().toISOString()
+                      })
+                    } else {
+                      await supabase.from('job_documents').insert({
+                        job_id: existingLink?.id || (await supabase.from('jobs').select('id').eq('marketsharp_job_id', msJob.id).single()).data?.id,
+                        file_name: fileName,
+                        file_path: filePath,
+                        file_type: contentType,
+                        file_size: buffer.length,
+                        uploaded_by: triggeringUserId || null,
+                        marketsharp_attachment_id: msAtt.id,
+                        ms_sync_status: 'synced',
+                        ms_sync_at: new Date().toISOString()
+                      })
+                    }
+                  }
+                } catch (pullErr) {
+                  console.error(`Failed to pull attachment ${msAtt.id}:`, pullErr)
+                }
+              }
+            }
+          }
+        } catch (attErr) {
+          console.error(`Failed to fetch attachments for job ${msJob.id}:`, attErr)
         }
       } catch (err) {
         errors.push(`Job ${msJob.id}: ${err instanceof Error ? err.message : err}`)

@@ -115,7 +115,7 @@ export default function JobsPage() {
       .eq('user_id', userId)
 
     const roles = (userRolesData as unknown as { roles: { name: string } }[])?.map(ur => ur.roles?.name).filter(Boolean) || []
-    const globalAdmin = roles.includes('super_admin') || roles.includes('brand_ambassador')
+    const globalAdmin = roles.includes('super_admin')
     const companyAdmin = roles.includes('company_admin')
 
     setIsGlobalAdmin(globalAdmin)
@@ -247,10 +247,10 @@ export default function JobsPage() {
             .eq('user_id', userData.user.id)
 
           const roles = (userRolesData as unknown as { roles: { name: string } }[])?.map(ur => ur.roles?.name).filter(Boolean) || []
-          const hasAdminPrivileges = roles.includes('super_admin') || roles.includes('company_admin') || roles.includes('brand_ambassador')
+          const hasAdminPrivileges = roles.includes('super_admin') || roles.includes('company_admin')
 
           setIsSuperUser(hasAdminPrivileges)
-          setIsGlobalAdmin(roles.includes('super_admin') || roles.includes('brand_ambassador'))
+          setIsGlobalAdmin(roles.includes('super_admin'))
           setIsCompAdmin(roles.includes('company_admin'))
 
           // If has admin privileges, fetch all users for assignment

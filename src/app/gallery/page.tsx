@@ -221,9 +221,7 @@ export default function GalleryPage() {
     return null
   }
 
-  const isAnyAdmin = userRoles.includes('super_admin') ||
-    userRoles.includes('brand_ambassador') ||
-    userRoles.includes('company_admin')
+  const isAnyAdmin = userRoles.includes('super_admin') || userRoles.includes('company_admin')
 
   return (
     <div className="min-h-screen bg-linear-to-br from-light-gray via-white to-light-gray">

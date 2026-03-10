@@ -22,7 +22,7 @@ export default async function IntegrationsPage(props: { searchParams: Promise<{ 
         .eq('user_id', user.id)
 
     const roleNames = (roles as unknown as { roles: { name: string } }[])?.map(r => r.roles?.name) || []
-    const isGlobalAdmin = roleNames.includes('super_admin') || roleNames.includes('brand_ambassador')
+    const isGlobalAdmin = roleNames.includes('super_admin')
     const isCompanyAdmin = roleNames.includes('company_admin')
 
     if (!isGlobalAdmin && !isCompanyAdmin) {

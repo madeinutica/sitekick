@@ -64,7 +64,7 @@ function UserManagementPageContent() {
         // Filter roles for Company Admins (cannot assign Super Admin roles)
         const filteredRoles = isGlobalAdmin
             ? (rolesData || [])
-            : (rolesData || []).filter((r: Role) => !['super_admin', 'brand_ambassador'].includes(r.name))
+            : (rolesData || []).filter((r: Role) => !['super_admin'].includes(r.name))
 
         setRoles(filteredRoles)
 
@@ -104,7 +104,7 @@ function UserManagementPageContent() {
 
                 // ALWAYS hide platform-level users from User Management list
                 // as they are managed via the platform, not individual companies.
-                if (roleNames.some(rn => ['super_admin', 'brand_ambassador'].includes(rn))) {
+                if (roleNames.some(rn => rn === 'super_admin')) {
                     return null
                 }
 
@@ -183,7 +183,7 @@ function UserManagementPageContent() {
                     ?.map(ur => ur.roles?.name)
                     .filter(Boolean) || []
 
-                const globalAdmin = roleNames.includes('super_admin') || roleNames.includes('brand_ambassador')
+                const globalAdmin = roleNames.includes('super_admin')
                 const companyAdmin = roleNames.includes('company_admin')
 
                 setIsSuperAdmin(globalAdmin)
