@@ -33,6 +33,7 @@ export interface SyncResult {
   success: boolean
   contactsSynced: number
   jobsSynced: number
+  isDelta: boolean
   errors: string[]
   startedAt: string
   completedAt: string
@@ -98,6 +99,7 @@ export async function runSync(companyId: string, config: { companyId: string; ap
       .maybeSingle()
 
     let filter: string | undefined = undefined
+    let isDelta = false
     if (lastSync?.started_at) {
       // MarketSharp OData dates must be YYYY-MM-DDTHH:MM:SS
       const lastDate = new Date(lastSync.started_at)
@@ -105,6 +107,7 @@ export async function runSync(companyId: string, config: { companyId: string; ap
       const bufferDate = new Date(lastDate.getTime() - 5 * 60 * 1000)
       const dateStr = bufferDate.toISOString().split('.')[0]
       filter = `lastUpdate ge datetime'${dateStr}'`
+      isDelta = true
       console.log(`[MarketSharp] Performing delta sync using filter: ${filter}`)
     } else {
       console.log(`[MarketSharp] No previous successful sync found. Performing full sync.`)
@@ -310,6 +313,7 @@ export async function runSync(companyId: string, config: { companyId: string; ap
       success: errors.length === 0,
       contactsSynced,
       jobsSynced,
+      isDelta,
       errors,
       startedAt,
       completedAt,
@@ -337,6 +341,7 @@ export async function runSync(companyId: string, config: { companyId: string; ap
       success: false,
       contactsSynced,
       jobsSynced,
+      isDelta: false,
       errors,
       startedAt,
       completedAt,

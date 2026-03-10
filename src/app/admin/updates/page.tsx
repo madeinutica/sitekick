@@ -13,6 +13,7 @@ type UpdateHistory = {
     bug_fixes: string[]
     recipient_count: number
     sent_at: string
+    notes?: string
 }
 
 export default function AdminUpdatesPage() {
@@ -23,6 +24,7 @@ export default function AdminUpdatesPage() {
     const [features, setFeatures] = useState<string[]>([''])
     const [bugFixes, setBugFixes] = useState<string[]>([''])
     const [history, setHistory] = useState<UpdateHistory[]>([])
+    const [notes, setNotes] = useState('')
     const [result, setResult] = useState<{ success?: boolean; sentCount?: number; error?: string } | null>(null)
     const router = useRouter()
     const supabase = createClient()
@@ -38,7 +40,7 @@ export default function AdminUpdatesPage() {
             if (!data.user) { router.push('/login'); return }
             const { data: rolesData } = await supabase.from('user_roles').select('roles(name)').eq('user_id', data.user.id)
             const roles = (rolesData as any[])?.map((ur: any) => ur.roles?.name).filter(Boolean) || []
-            if (!roles.includes('super_admin') && !roles.includes('brand_ambassador')) { router.push('/'); return }
+            if (!roles.includes('super_admin')) { router.push('/'); return }
             await loadHistory()
             setLoading(false)
         }
@@ -49,17 +51,25 @@ export default function AdminUpdatesPage() {
         const cleanFeatures = features.filter(f => f.trim())
         const cleanFixes = bugFixes.filter(b => b.trim())
         if (!title.trim()) return
+
         setSending(true)
         setResult(null)
-        const res = await sendSystemUpdate(title.trim(), cleanFeatures, cleanFixes)
-        setResult(res)
-        if (res.success) {
-            setTitle('')
-            setFeatures([''])
-            setBugFixes([''])
-            await loadHistory()
+
+        try {
+            const res = await sendSystemUpdate(title.trim(), cleanFeatures, cleanFixes, notes.trim())
+            setResult(res)
+            if (res.success) {
+                setTitle('')
+                setFeatures([''])
+                setBugFixes([''])
+                setNotes('')
+                await loadHistory()
+            }
+        } catch (err: any) {
+            setResult({ error: "An unexpected error occurred while sending. Please try again." })
+        } finally {
+            setSending(false)
         }
-        setSending(false)
     }
 
     const updateListItem = (
@@ -127,6 +137,19 @@ export default function AdminUpdatesPage() {
                                     placeholder="e.g. Week of March 6 — Performance & New Gallery Filters"
                                     className="w-full px-4 py-3 border border-slate-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-red/30 focus:border-primary-red"
                                 />
+                            </div>
+
+                            {/* Notes */}
+                            <div className="mb-6">
+                                <label className="block text-sm font-semibold text-slate-700 mb-2">📝 Update Notes</label>
+                                <textarea
+                                    value={notes}
+                                    onChange={e => setNotes(e.target.value)}
+                                    placeholder="Add a personal note or summary (optional)..."
+                                    rows={4}
+                                    className="w-full px-4 py-3 border border-slate-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-red/30 focus:border-primary-red resize-none"
+                                />
+                                <p className="text-[10px] text-slate-400 mt-1 italic">This will appear at the top of the email as a summary paragraph.</p>
                             </div>
 
                             {/* New Features */}
@@ -254,10 +277,14 @@ export default function AdminUpdatesPage() {
                                             <div style={{ color: '#94a3b8', fontSize: 11, textTransform: 'uppercase', letterSpacing: 1 }}>
                                                 {new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
                                             </div>
-                                            <div style={{ fontWeight: 800, fontSize: 18, color: '#0f172a', margin: '8px 0 16px' }}>{title}</div>
-                                            <div style={{ color: '#475569', fontSize: 13, lineHeight: 1.6, marginBottom: 20 }}>
-                                                Here's a summary of what changed in Sitekick this week. We've been busy making improvements to help your team work faster and smarter.
+                                            <div style={{ color: '#0f172a', fontSize: 22, fontWeight: 800, marginBottom: 24, marginTop: 8 }}>
+                                                {title || 'Update Title'}
                                             </div>
+                                            {notes && (
+                                                <div style={{ background: '#f1f5f9', borderRadius: 8, padding: '16px', marginBottom: 16, borderLeft: '4px solid #cbd5e1', color: '#475569', fontSize: 13, lineHeight: 1.6 }}>
+                                                    {notes}
+                                                </div>
+                                            )}
                                             {cleanFeatures.length > 0 && (
                                                 <div style={{ background: '#f0fdf4', borderRadius: 8, padding: '16px', marginBottom: 16, border: '1px solid #bbf7d0' }}>
                                                     <div style={{ color: '#15803d', fontWeight: 700, marginBottom: 10 }}>✨ What's New</div>
@@ -267,13 +294,18 @@ export default function AdminUpdatesPage() {
                                                 </div>
                                             )}
                                             {cleanFixes.length > 0 && (
-                                                <div style={{ background: '#fff7ed', borderRadius: 8, padding: '16px', border: '1px solid #fed7aa' }}>
+                                                <div style={{ background: '#fff7ed', borderRadius: 8, padding: '16px', border: '1px solid #fed7aa', marginBottom: 16 }}>
                                                     <div style={{ color: '#c2410c', fontWeight: 700, marginBottom: 10 }}>🐛 Bug Fixes</div>
                                                     <ul style={{ paddingLeft: 20, margin: 0 }}>
                                                         {cleanFixes.map((b, i) => <li key={i} style={{ color: '#9a3412', fontSize: 13, lineHeight: 1.7 }}>{b}</li>)}
                                                     </ul>
                                                 </div>
                                             )}
+                                            <div style={{ marginTop: 40, paddingTop: 24, borderTop: '1px solid #e2e8f0', textAlign: 'center' }}>
+                                                <div style={{ color: '#94a3b8', fontSize: 11 }}>
+                                                    © {new Date().getFullYear()} Sitekick. All rights reserved.
+                                                </div>
+                                            </div>
                                         </div>
                                     </div>
                                 </div>
@@ -303,6 +335,9 @@ export default function AdminUpdatesPage() {
                                                 <span className="w-1 h-1 rounded-full bg-slate-300" />
                                                 <span className="text-xs text-slate-500 font-medium">📨 {update.recipient_count} recipients</span>
                                             </div>
+                                            {update.notes && (
+                                                <p className="text-[11px] text-slate-500 mt-2 line-clamp-2 italic">"{update.notes}"</p>
+                                            )}
                                             <div className="flex gap-2 mt-2 flex-wrap">
                                                 {update.features.length > 0 && (
                                                     <span className="text-[10px] bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-semibold">

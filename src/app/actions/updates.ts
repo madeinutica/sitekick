@@ -6,7 +6,7 @@ import { headers } from 'next/headers'
 
 const resend = new Resend(process.env.RESEND_API_KEY)
 
-function buildEmailHtml(title: string, features: string[], bugFixes: string[], date: string) {
+function buildEmailHtml(title: string, features: string[], bugFixes: string[], date: string, notes?: string) {
   return `
 <!DOCTYPE html>
 <html>
@@ -29,9 +29,10 @@ function buildEmailHtml(title: string, features: string[], bugFixes: string[], d
       <p style="margin:0 0 4px;color:#94a3b8;font-size:12px;text-transform:uppercase;letter-spacing:1px;font-weight:600;">${date}</p>
       <h2 style="margin:0 0 24px;color:#0f172a;font-size:22px;font-weight:800;">${title}</h2>
 
-      <p style="margin:0 0 32px;color:#475569;font-size:15px;line-height:1.6;">
-        Here's a summary of what changed in Sitekick this week. We've been busy making improvements to help your team work faster and smarter.
-      </p>
+      ${notes ? `
+      <div style="margin:0 0 32px;color:#475569;font-size:15px;line-height:1.6;padding:16px;background:#f1f5f9;border-radius:12px;border-left:4px solid #cbd5e1;">
+        ${notes.replace(/\n/g, '<br/>')}
+      </div>` : ''}
 
       ${features.length > 0 ? `
       <!-- New Features -->
@@ -61,13 +62,12 @@ function buildEmailHtml(title: string, features: string[], bugFixes: string[], d
       <p style="margin:8px 0 0;color:#475569;font-size:15px;">— The Sitekick Team</p>
     </div>
 
-    <!-- Footer -->
-    <div style="background:#f8fafc;border-top:1px solid #e2e8f0;padding:24px 40px;text-align:center;">
-      <p style="margin:0;color:#94a3b8;font-size:12px;">
-        You're receiving this because you have a Sitekick account.<br/>
-        © ${new Date().getFullYear()} Sitekick. All rights reserved.
-      </p>
-    </div>
+      <!-- Footer -->
+      <div style="margin:48px 0 0;padding:32px 0 0;border-top:1px solid #e2e8f0;text-align:center;">
+        <p style="margin:0;color:#94a3b8;font-size:12px;">
+          &copy; ${new Date().getFullYear()} Sitekick. All rights reserved.
+        </p>
+      </div>
   </div>
 </body>
 </html>`
@@ -76,7 +76,8 @@ function buildEmailHtml(title: string, features: string[], bugFixes: string[], d
 export async function sendSystemUpdate(
   title: string,
   features: string[],
-  bugFixes: string[]
+  bugFixes: string[],
+  notes?: string
 ): Promise<{ success?: boolean; sentCount?: number; error?: string }> {
   const headerList = await headers()
   const authHeader = headerList.get('x-user-id')
@@ -99,7 +100,7 @@ export async function sendSystemUpdate(
   if (emails.length === 0) return { error: 'No users found to email.' }
 
   const date = new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })
-  const html = buildEmailHtml(title, features, bugFixes, date)
+  const html = buildEmailHtml(title, features, bugFixes, date, notes)
 
   // Build one email object per user so no recipient sees other addresses
   const emailPayloads = emails.map(email => ({
@@ -110,26 +111,51 @@ export async function sendSystemUpdate(
   }))
 
   try {
-    // Resend batch limit is 100 per call, so chunk if needed
+    // Resend batch limit is 100 per call
     const BATCH_SIZE = 100
+    const totalBatches = Math.ceil(emailPayloads.length / BATCH_SIZE)
+    console.log(`Sending ${emailPayloads.length} emails in ${totalBatches} batches...`)
+
+    const sendPromises = []
     for (let i = 0; i < emailPayloads.length; i += BATCH_SIZE) {
-      await resend.batch.send(emailPayloads.slice(i, i + BATCH_SIZE))
+      sendPromises.push(resend.batch.send(emailPayloads.slice(i, i + BATCH_SIZE)))
     }
+
+    await Promise.all(sendPromises)
+    console.log("Emails sent successfully.")
+
+    // Save to history
+    // Get current user id from the headers (set by client or middleware)
+    const currentUserId = headerList.get('x-user-id')
+    console.log("Logging update to history...")
+
+    const { error: insertError } = await supabaseAdmin.from('system_updates').insert({
+      title,
+      features,
+      bug_fixes: bugFixes,
+      notes,
+      recipient_count: emails.length,
+      created_by: currentUserId || null,
+    })
+
+    if (insertError) {
+      console.error("Failed to log update to history:", insertError.message)
+      // We don't return failure here because emails were sent, 
+      // but we log it for debugging.
+      if (insertError.message.includes('not found')) {
+        return {
+          success: true,
+          sentCount: emails.length,
+          error: "Emails sent, but history table 'system_updates' is missing. Please run migrations."
+        }
+      }
+    }
+
+    return { success: true, sentCount: emails.length }
   } catch (err: any) {
-    return { error: `Failed to send emails: ${err.message}` }
+    console.error("System update failed:", err)
+    return { error: `Failed to process system update: ${err.message}` }
   }
-
-  // Save to history
-  const { data: currentUser } = await supabaseAdmin.auth.admin.getUserById(authHeader ?? '')
-  await supabaseAdmin.from('system_updates').insert({
-    title,
-    features,
-    bug_fixes: bugFixes,
-    recipient_count: emails.length,
-    created_by: currentUser?.user?.id ?? null,
-  })
-
-  return { success: true, sentCount: emails.length }
 }
 
 export async function getSystemUpdates() {

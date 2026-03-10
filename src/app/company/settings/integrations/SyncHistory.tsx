@@ -77,7 +77,8 @@ export function SyncHistory({ logs }: SyncHistoryProps) {
                                         {log.jobs_synced}
                                     </td>
                                     <td className="px-6 py-4 text-sm text-slate-500 max-w-xs truncate italic">
-                                        {log.errors ? `${log.errors.length} errors found` : 'Healthy sync'}
+                                        {log.errors ? `${log.errors.length} errors found` :
+                                            (log.contacts_synced === 0 && log.jobs_synced === 0) ? 'Healthy sync (No changes detected)' : 'Healthy sync (Synchronized data)'}
                                     </td>
                                 </tr>
                             ))}
